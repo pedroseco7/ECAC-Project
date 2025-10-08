@@ -1,6 +1,7 @@
 import numpy as np
 import os
 import matplotlib.pyplot as plt
+from scipy.stats import zscore
 
 #Global variables
 activities = {
@@ -178,7 +179,71 @@ def outlierDensity(sensor_type):
     
     return
 
+#Exercício 3.3
+def Zscore(x, mean, std, k):
 
+    # X é a amostra 
+    zscore = (x-mean) / std
+
+
+    # Caso esteja acima ou abaixo de K, retorna 1 (identifica o outlier)
+    if(np.abs(zscore) > k):
+        return 1
+    
+    else:
+        return 0
+    
+
+def outliers(data, sensor_type):
+
+    if data is None:
+        return
+    
+    # Definir colunas para cada sensor
+    sensor_columns = {
+        'acceleration': (1, 2, 3),
+        'gyroscope': (4, 5, 6),
+        'magnetometer': (7, 8, 9)
+    }
+    
+    if sensor_type not in sensor_columns:
+        print(f"Sensor type '{sensor_type}' não suportado.")
+        return
+    
+    #obter as colunas corretas
+    col_x, col_y, col_z = sensor_columns[sensor_type]
+    activity_data = {}
+
+    for key, values in data.items():
+        for row in values:
+            activity = int(row[11]) #buscar cada label de atividade
+            
+            #buscar os valores x,y,z do sensor que queremos
+            x_val = row[col_x]
+            y_val = row[col_y]
+            z_val = row[col_z]
+            
+            #calcular o módulo com a formula que dão
+            module = calculateModuleVariable(x_val, y_val, z_val)
+            
+            #adicionar o módulo ao dicionário de atividades
+            if activity not in activity_data:
+                activity_data[activity] = []
+            activity_data[activity].append(module)
+
+    values_K = (3, 3.5, 4)
+
+    outliers_count_activity_1 = 0
+    mean = np.mean(activity_data[1])
+    std = np.std(activity_data[1])
+
+    for i in activity_data[1]:
+
+        if(Zscore(i, mean, std, 3)):
+            outliers_count_activity_1 += 1
+
+    print("Outliers Count: ", outliers_count_activity_1)
+    print("Total Count: ", len(activity_data[1]))
 
 def main():
 
@@ -195,21 +260,23 @@ def main():
 
     #3.1
     print("\n=== Acelerómetro ===")
-    loadBoxPlotActivityAndVariable(dataset, 'acceleration')
+    #loadBoxPlotActivityAndVariable(dataset, 'acceleration')
 
-    loadBoxPlotActivityAndVariable(dataset, 'gyroscope')
+    #loadBoxPlotActivityAndVariable(dataset, 'gyroscope')
 
-    loadBoxPlotActivityAndVariable(dataset, 'magnetometer')
+    #loadBoxPlotActivityAndVariable(dataset, 'magnetometer')
     
     #3.2 - Análise de densidade de outliers
     print("\n=== Outliers Acelerómetro ===")
-    outlierDensity('acceleration')
+    #outlierDensity('acceleration')
 
     print("\n=== Outliers Giroscópio ===")
-    outlierDensity('gyroscope')
+    #outlierDensity('gyroscope')
     
     print("\n=== Outliers Magnetómetro ===")
-    outlierDensity('magnetometer')
+    #outlierDensity('magnetometer')
+
+    outliers(dataset, 'acceleration')
 
 if __name__ == "__main__":
     main()
