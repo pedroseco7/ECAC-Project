@@ -185,7 +185,6 @@ def Zscore(x, mean, std, k):
     # X é a amostra 
     zscore = (x-mean) / std
 
-
     # Caso esteja acima ou abaixo de K, retorna 1 (identifica o outlier)
     if(np.abs(zscore) > k):
         return 1
@@ -194,7 +193,7 @@ def Zscore(x, mean, std, k):
         return 0
     
 
-def outliers(data, sensor_type):
+def outliers(data, sensor_type, k):
 
     if data is None:
         return
@@ -231,20 +230,22 @@ def outliers(data, sensor_type):
                 activity_data[activity] = []
             activity_data[activity].append(module)
 
-    values_K = (3, 3.5, 4)
 
-    outliers_count_activity_1 = 0
-    mean = np.mean(activity_data[1])
-    std = np.std(activity_data[1])
+    for activity in sorted(activity_data.keys()):
+        data_points = np.array(activity_data[activity])
+        nr = len(data_points) #numero total de pontos da atividade
 
-    for i in activity_data[1]:
+        outliers_counter_activity = 0
+        mean = np.mean(activity_data[activity])
+        std = np.std(activity_data[activity])
 
-        if(Zscore(i, mean, std, 3)):
-            outliers_count_activity_1 += 1
+        for i in activity_data[activity]:
 
-    print("Outliers Count: ", outliers_count_activity_1)
-    print("Total Count: ", len(activity_data[1]))
-
+            if(Zscore(i, mean, std, k)):
+                outliers_counter_activity += 1
+        
+        print(f"Atividade: {activities.get(activity, f'Activity {activity}')}, Outliers: {outliers_counter_activity}, Total: {nr}")
+    
 def main():
 
     #2.
@@ -276,7 +277,10 @@ def main():
     print("\n=== Outliers Magnetómetro ===")
     #outlierDensity('magnetometer')
 
-    outliers(dataset, 'acceleration')
+    K = (3, 3.5, 4)
+    for i in K:
+        print(f"\n=== Detecção de Outliers Acelerómetro Para K = {i}===")
+        outliers(dataset, 'acceleration', i)
 
 if __name__ == "__main__":
     main()
