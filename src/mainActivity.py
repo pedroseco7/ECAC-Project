@@ -246,9 +246,115 @@ def outliers(data, sensor_type, k):
         
         print(f"Atividade: {activities.get(activity, f'Activity {activity}')}, Outliers: {outliers_counter_activity}, Total: {nr}")
     
+
+# Exercício 3.6
+
+def kmeans(X, n_clusters, max_iters=300):
+
+    # Inicializar os centróides aleatoriamente, escolhendo n_clusters pontos de dados aleatoriamente
+
+    centroids = X[np.random.choice(X.shape[0], n_clusters, replace=False)]
+
+    for _ in range(max_iters):
+
+        distances = np.linalg.norm(X[:, np.newaxis] - centroids, axis=2)
+        labels = np.argmin(distances, axis=1)
+
+        new_centroids = np.array([X[labels == k].mean(axis=0) for k in range(n_clusters)])
+        if np.all(centroids == new_centroids):
+            print("ESTABILIZOU")
+            break
+        centroids = new_centroids
+
+    print("Centróides finais:")
+    print(centroids)
+
+    # Separar os pontos de dados para cada centróide considerando a distância
+
+    clusters = [X[labels == k] for k in range(n_clusters)]
+
+    return centroids, clusters, labels
+
+def kmeansVisualization(data):
+
+    sensors_types = ['acceleration', 'gyroscope', 'magnetometer']
+    activities_data = []
+
+    if data is None:
+        return
+    
+    for sensor_type in sensors_types:
+        # Definir colunas para cada sensor
+        sensor_columns = {
+            'acceleration': (1, 2, 3),
+            'gyroscope': (4, 5, 6),
+            'magnetometer': (7, 8, 9)
+        }
+        
+        if sensor_type not in sensor_columns:
+            print(f"Sensor type '{sensor_type}' não suportado.")
+            return
+        
+        #obter as colunas corretas
+        col_x, col_y, col_z = sensor_columns[sensor_type]
+        activity_data = {}
+
+        for key, values in data.items():
+            for row in values:
+                activity = int(row[11]) #buscar cada label de atividade
+                
+                #buscar os valores x,y,z do sensor que queremos
+                x_val = row[col_x]
+                y_val = row[col_y]
+                z_val = row[col_z]
+                
+                #calcular o módulo com a formula que dão
+                module = calculateModuleVariable(x_val, y_val, z_val)
+                
+                #adicionar o módulo ao dicionário de atividades
+                if activity not in activity_data:
+                    activity_data[activity] = []
+                activity_data[activity].append(module)
+        
+        activities_data.append(activity_data)
+
+    for activity in sorted(activity_data.keys()):
+        data_acceleration = np.array(activities_data[0][activity])  #usar os dados do acelerómetro para k-means
+        data_gyroscope = np.array(activities_data[1][activity])
+        data_magnetometer = np.array(activities_data[2][activity])
+
+        # Montar pontos de dados 3D
+
+        X = np.vstack((data_acceleration, data_gyroscope, data_magnetometer)).T
+
+        centroids, clusters, labels = kmeans(X, n_clusters=4)
+
+        print("Centroides Finais: ")
+        print(centroids)
+        print(clusters)
+        print(labels)
+        
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection='3d')
+        colors = ['blue', 'green', 'orange', 'purple']
+
+        for i, cluster in enumerate(clusters):
+            color = colors [i % len(colors)]
+            ax.scatter(cluster[:, 0], cluster[:, 1], cluster[:, 2], c=color, marker='.', label=f'Cluster {i}')
+
+        ax.set_xlabel('Acceleration Module')
+        ax.set_ylabel('Gyroscope Module')
+        ax.set_zlabel('Magnetometer Module')
+        ax.set_title(f'K-Means Clustering - {activities.get(activity, f"Activity {activity}")}')
+        ax.legend()
+        plt.show()
+        break
+
+
 def main():
 
     #2.
+    #"""
     dataset = loadData(None)
     
     if not dataset:
@@ -258,13 +364,17 @@ def main():
         for key, values in dataset.items():
             print(f"Key: {key}, Values: {values}")
             break
-
+    
+    #"""
+    
     #3.1
     print("\n=== Acelerómetro ===")
     #loadBoxPlotActivityAndVariable(dataset, 'acceleration')
 
+    print("\n=== Giroscópio ===")
     #loadBoxPlotActivityAndVariable(dataset, 'gyroscope')
 
+    print("\n=== Magnetómetro ===")
     #loadBoxPlotActivityAndVariable(dataset, 'magnetometer')
     
     #3.2 - Análise de densidade de outliers
@@ -277,10 +387,18 @@ def main():
     print("\n=== Outliers Magnetómetro ===")
     #outlierDensity('magnetometer')
 
+
+    """
     K = (3, 3.5, 4)
     for i in K:
         print(f"\n=== Detecção de Outliers Acelerómetro Para K = {i}===")
         outliers(dataset, 'acceleration', i)
+        break
+    """
+    #3.6 - K-Means
+    
+    kmeansVisualization(dataset)
+    
 
 if __name__ == "__main__":
     main()
