@@ -3,6 +3,9 @@ import os
 import matplotlib.pyplot as plt
 from scipy.stats import zscore
 
+from sklearn.cluster import DBSCAN 
+from sklearn.preprocessing import StandardScaler
+
 #Global variables
 activities = {
         1: 'STAND',
@@ -97,7 +100,7 @@ def loadBoxPlotActivityAndVariable(data, sensor_type):
             activity_data[activity].append(module)
     
     
-    #ordenar atividades para garantir consistência (o copilot aconselhou)
+    #ordenar atividades para garantir consistência
     sorted_activities = sorted(activity_data.keys())
     
     boxplot_data = [activity_data[activity] for activity in sorted_activities]
@@ -327,7 +330,7 @@ def kmeansVisualization(data):
 
         X = np.vstack((data_acceleration, data_gyroscope, data_magnetometer)).T
 
-        centroids, clusters, labels = kmeans(X, n_clusters=4)
+        centroids, clusters, labels = kmeans(X, n_clusters=3)
 
         print("Centroides Finais: ")
         print(centroids)
@@ -348,7 +351,149 @@ def kmeansVisualization(data):
         ax.set_title(f'K-Means Clustering - {activities.get(activity, f"Activity {activity}")}')
         ax.legend()
         plt.show()
-        break
+
+
+#3.7.1
+def dbscan(data, epslon, min_samples):
+
+    #normalizar os dados
+    scaler = StandardScaler()
+    data_scaled = scaler.fit_transform(data)
+
+    #aplicar o dbscan
+    dbscan = DBSCAN(eps=epslon, min_samples=min_samples)
+    labels = dbscan.fit_predict(data_scaled) #cluster labels para cada ponto no dataset
+
+    existe_outlier = 0
+
+    if -1 in labels:
+        existe_outlier = 1
+
+    n_clusters = len(set(labels)) - existe_outlier
+    n_noise = list(labels).count(-1)
+
+    return labels, n_clusters, n_noise
+
+def dbscanVisualization(data):
+
+    sensors_types = ['acceleration', 'gyroscope', 'magnetometer']
+    activities_data = []
+
+    if data is None:
+        return
+    
+    for sensor_type in sensors_types:
+        # Definir colunas para cada sensor
+        sensor_columns = {
+            'acceleration': (1, 2, 3),
+            'gyroscope': (4, 5, 6),
+            'magnetometer': (7, 8, 9)
+        }
+        
+        if sensor_type not in sensor_columns:
+            print(f"Sensor type '{sensor_type}' não suportado.")
+            return
+        
+        #obter as colunas corretas
+        col_x, col_y, col_z = sensor_columns[sensor_type]
+        activity_data = {}
+
+        for key, values in data.items():
+            for row in values:
+                activity = int(row[11]) #buscar cada label de atividade
+                
+                #buscar os valores x,y,z do sensor que queremos
+                x_val = row[col_x]
+                y_val = row[col_y]
+                z_val = row[col_z]
+                
+                #calcular o módulo com a formula que dão
+                module = calculateModuleVariable(x_val, y_val, z_val)
+                
+                #adicionar o módulo ao dicionário de atividades
+                if activity not in activity_data:
+                    activity_data[activity] = []
+                activity_data[activity].append(module)
+        
+        activities_data.append(activity_data)
+    
+    #testar diferentes valores do epslon e do min_samples para ver o que dá melhor
+    valores_epslon = [0.3,0.5, 1.0]
+    valores_min_samples = [5,10,15]
+
+
+    for activity in sorted(activity_data.keys()):
+        data_acceleration = np.array(activities_data[0][activity]) 
+        data_gyroscope = np.array(activities_data[1][activity])
+        data_magnetometer = np.array(activities_data[2][activity])
+
+        X = np.vstack((data_acceleration, data_gyroscope, data_magnetometer)).T
+
+        #procurar a melhor configuração do dbscan, testar com vários valores de epslon e min_samples
+        best_eps = 0
+        best_min_samples = 0
+        best_n_clusters = 0
+
+        for eps in valores_epslon:
+            for min_samples in valores_min_samples:
+
+                labels, n_clusters, n_noise = dbscan(X, eps, min_samples)
+
+                if n_clusters > best_n_clusters and n_clusters <= 4:
+                    best_n_clusters = n_clusters
+                    best_eps = eps
+                    best_min_samples = min_samples
+        
+        #aplicar a melhor configuração do dbscan
+        labels_dbscan, n_clusters_dbscan, n_noise_dbscan = dbscan(X, best_eps, best_min_samples)
+
+        print(f"Atividade: {activities.get(activity, f'Activity {activity}')}, Epslon: {best_eps}, Min Samples: {best_min_samples}, Clusters: {n_clusters_dbscan}, Outliers: {n_noise_dbscan}")
+
+        #visualizar os resultados do DBSCAN
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection='3d')
+        unique_labels = set(labels_dbscan)
+        colors = plt.cm.Spectral(np.linspace(0, 1, len(unique_labels)))
+            
+        for label, color in zip(unique_labels, colors):
+            if label == -1:
+                # Pontos de ruído em preto
+                class_member_mask = (labels_dbscan == label)
+                xy = X[class_member_mask]
+                ax.scatter(xy[:, 0], xy[:, 1], xy[:, 2], 
+                            c='black', marker='x', s=20, alpha=0.6, label='Noise')
+            else:
+                class_member_mask = (labels_dbscan == label)
+                xy = X[class_member_mask]
+                ax.scatter(xy[:, 0], xy[:, 1], xy[:, 2], 
+                            c=[color], marker='o', s=20, alpha=0.8, label=f'Cluster {label}')
+
+        
+        ax.set_labelx('Acceleration')
+        ax.set_labely('Gyroscope')
+        ax.set_labelz('Magnetometer')
+        ax.set_title(f'DBSCAN Clustering - {activities.get(activity, f"Activity {activity}")}')
+        ax.legend()
+        plt.show()
+
+        break #primeira atividade para testar 
+
+
+'''
+TODO:
+4.1
+
+1. Calcular médias por atividade
+2. Testar normalidade (Kolmogorov-Smirnov)
+3. Se NORMAL → usar Student's t-test
+   Se NÃO NORMAL → usar Kruskal-Wallis
+4. Interpretar p-values
+'''
+
+
+
+
+
 
 
 def main():
@@ -397,7 +542,10 @@ def main():
     """
     #3.6 - K-Means
     
-    kmeansVisualization(dataset)
+    #kmeansVisualization(dataset)
+
+    #3.7.1
+    #dbscanVisualization(dataset)
     
 
 if __name__ == "__main__":
