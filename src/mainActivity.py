@@ -6,6 +6,8 @@ from scipy.stats import zscore
 from sklearn.cluster import DBSCAN 
 from sklearn.preprocessing import StandardScaler
 
+from scipy.stats import kstest, ttest_ind, kruskal 
+
 #Global variables
 activities = {
         1: 'STAND',
@@ -490,6 +492,70 @@ TODO:
 4. Interpretar p-values
 '''
 
+
+def estatisticalSignificance(data):
+
+    sensors_types = ['acceleration', 'gyroscope', 'magnetometer']
+    activities_data = []
+
+    if data is None:
+        return
+    
+    for sensor_type in sensors_types:
+        # Definir colunas para cada sensor
+        sensor_columns = {
+            'acceleration': (1, 2, 3),
+            'gyroscope': (4, 5, 6),
+            'magnetometer': (7, 8, 9)
+        }
+        
+        if sensor_type not in sensor_columns:
+            print(f"Sensor type '{sensor_type}' não suportado.")
+            return
+        
+        #obter as colunas corretas
+        col_x, col_y, col_z = sensor_columns[sensor_type]
+        activity_data = {}
+
+        for key, values in data.items():
+            for row in values:
+                activity = int(row[11]) #buscar cada label de atividade
+                
+                #buscar os valores x,y,z do sensor que queremos
+                x_val = row[col_x]
+                y_val = row[col_y]
+                z_val = row[col_z]
+                
+                #calcular o módulo com a formula que dão
+                module = calculateModuleVariable(x_val, y_val, z_val)
+                
+                #adicionar o módulo ao dicionário de atividades
+                if activity not in activity_data:
+                    activity_data[activity] = []
+                activity_data[activity].append(module)
+        
+        #1. calcular a média por atividade
+        means_by_activity = {}
+
+        for activity in sorted(activities_data.keys()):
+            data_array = np.array(activity_data[activity])
+
+            #guardar a info das atividades numa struct
+            means_by_activity[activity] = {
+                'mean': np.mean(data_array),
+                'std': np.std(data_array),
+                'n': len(data_array),
+                'data': data_array
+            }
+
+        #2. testar a normalidade com o kstest
+        normal_activities = []
+        non_normal_activities = []
+
+        for activity, stats in means_by_activity.items():
+            data_array = stats['data']
+
+            ks_stat, ks_pvalue = kstest(data_array, 'norm', args=(stats['mean'], stats['std']))
 
 
 
