@@ -3,11 +3,13 @@ import os
 import matplotlib.pyplot as plt
 
 from scipy.stats import skew, kurtosis, iqr, entropy
-
+from scipy.fft import fft
 from scipy.stats import kstest, ttest_ind, kruskal 
 
 from sklearn.cluster import DBSCAN 
 from sklearn.preprocessing import StandardScaler
+
+import pandas as pd
 
 #Global variables
 activities = {
@@ -648,132 +650,288 @@ def estatisticalSignificance(data):
 
 #4.2 
 #Funções de Features Temporais (Por Eixo) do artigo
+'''
+Features Temporais:
 
-def calc_mean(window_axis):
-    return np.mean(window_axis)
+Mean (média)
+Median (mediana)
+Standard deviation (desvio padrão)
+Variance (variância)
+Root Mean Square (RMS)
+Averaged derivatives (média das derivadas de primeira ordem)
+Skewness (assimetria da distribuição)
+Kurtosis (curtose da distribuição)
+Interquartile Range (amplitude interquartílica)
+Zero Crossing Rate (taxa de cruzamento por zero)
+Mean Crossing Rate (taxa de cruzamento pela média)
+Pairwise Correlation (correlação entre eixos dos sensores)
+Spectral Entropy (entropia espectral) — transição entre o domínio temporal e espectral.
+'''
 
-def calc_median(window_axis):
-    return np.median(window_axis)
+'''
+Features Espectrais:
+AI - Mean of Movement Intensity
+VI - Variance of Movement Intensity
+SMA - Signal Magnitude Area normalizada
+EVA - Eigenvalues of Dominant Directions (2 maiores autovalores)
+CAGH - Correlation between Acceleration along Gravity and Heading Directions
+AVH - Averaged Velocity along Heading Direction
+AVG - Averaged Velocity along Gravity Direction
+ARATG - Averaged Rotation Angles related to Gravity Direction
+DF - Dominant Frequency (frequência dominante no espectro FFT)
+ENERGY - Soma dos quadrados das magnitudes FFT normalizada pela janela
+AAE - Averaged Acceleration Energy (média das energias das 3 componentes de aceleração)
+ARE - Averaged Rotation Energy (média das energias das 3 componentes do giroscópio)
+'''
 
-def calc_std(window_axis):
-    return np.std(window_axis)
+SAMPLING_RATE = 50  # Hz
+WINDOW_SECS = 5
+WINDOW_SIZE = int(SAMPLING_RATE * WINDOW_SECS)
+OVERLAP_RATE = 0.5
+STEP_SIZE = int(WINDOW_SIZE * (1 - OVERLAP_RATE))
 
-def calc_variance(window_axis):
-    return np.var(window_axis)
+def segment_data(data, window_size=WINDOW_SIZE, step_size=STEP_SIZE):
+    """
+    Segmenta os dados em janelas deslizantes e descarta janelas que contenham mais do que uma atividade
+    """
 
-def calc_rms(window_axis):
-    """Calcula o Root Mean Square (RMS)"""
-    return np.sqrt(np.mean(window_axis**2))
+    segments = []
+    labels = []
 
-def calc_avg_derivative(window_axis):
-    """Calcula a média das derivadas de primeira ordem (Averaged derivatives)"""
-    return np.mean(np.diff(window_axis))
+    for i in range(0, len(data) - window_size + 1, step_size):
+        
+        window = data[i:i + window_size]
 
-def calc_skewness(window_axis):
-    """Calcula a assimetria (Skewness)"""
-    return skew(window_axis)
+        activity_labels_in_window = window[:,11]
 
-def calc_kurtosis(window_axis):
-    """Calcula a curtose (Kurtosis)"""
-    return kurtosis(window_axis)
+        #verificar se todas as labels na janela são iguais
+        if np.all(activity_labels_in_window == activity_labels_in_window[0]):
+            segments.append(window)
+            labels.append(activity_labels_in_window[0])
 
-def calc_iqr(window_axis):
-    """Calcula o Intervalo Interquartil (Interquartile Range)"""
-    return iqr(window_axis)
+    return segments, labels
 
-def calc_zcr(window_axis):
-    """Calcula a Taxa de Cruzamento de Zero (Zero Crossing Rate)"""
-    T = len(window_axis)
-    crossings = np.sum((window_axis[:-1] * window_axis[1:]) < 0)
-    return crossings / T
+#funcoes de features temporais
+def f_mean(data):
+    """Média."""
+    return np.mean(data)
 
-def calc_mcr(window_axis):
-    """Calcula a Taxa de Cruzamento da Média (Mean Crossing Rate)"""
-    T = len(window_axis)
-    mean = np.mean(window_axis)
-    centered_signal = window_axis - mean
-    crossings = np.sum((centered_signal[:-1] * centered_signal[1:]) < 0)
-    return crossings / T
+def f_median(data):
+    """Mediana."""
+    return np.median(data)
 
+def f_std(data):
+    """Desvio Padrão."""
+    return np.std(data)
 
-#Funções de Features Temporais (Multi-Eixo) do artigo
+def f_var(data):
+    """Variância."""
+    return np.var(data)
 
-def calc_pairwise_correlation(window_multi):
-    """Calcula a correlação entre pares de eixos (Pairwise Correlation)"""
-    # window_multi é N_samples x 3_eixos
-    corr_matrix = np.corrcoef(window_multi, rowvar=False)
-    # Retorna as correlações do triângulo superior (XY, XZ, YZ)
-    return corr_matrix[0, 1], corr_matrix[0, 2], corr_matrix[1, 2]
+def f_rms(data):
+    """Root Mean Square (RMS)."""
+    return np.sqrt(np.mean(data**2))
 
-def calc_ai_vi(window_accel):
-    """Calcula a Média (AI) e Variância (VI) da Intensidade do Movimento (Movement Intensity)"""
-    # Nota: O artigo remove a gravidade, mas não especifica como.
-    # Esta é uma implementação da magnitude total.
-    mi = np.sqrt(np.sum(window_accel**2, axis=1))
-    ai = np.mean(mi) 
-    vi = np.var(mi)
-    return ai, vi
+def f_avg_deriv(data):
+    """Média das derivadas de primeira ordem."""
+    return np.mean(np.diff(data))
 
-def calc_sma(window_accel):
-    """Calcula a Área de Magnitude do Sinal Normalizada (Normalized Signal Magnitude Area)"""
-    # Fórmula: (1/T) * (sum(|ax|) + sum(|ay|) + sum(|az|))
-    # Isto é matematicamente equivalente a sum(mean(abs(eixos)))
-    T = len(window_accel)
-    sum_abs_axes = np.sum(np.abs(window_accel), axis=0)
-    sma = np.sum(sum_abs_axes) / T
+def f_skew(data):
+    """Skewness (Assimetria)."""
+    return skew(data)
+
+def f_kurt(data):
+    """Kurtosis (Curtose)."""
+    return kurtosis(data)
+
+def f_iqr(data):
+    """Interquartile Range (Amplitude Interquartílica)."""
+    return iqr(data)
+
+def f_zcr(data):
+    """Zero Crossing Rate."""
+    # Conta o número de vezes que o sinal cruza o zero
+    return np.sum(np.diff(np.signbit(data)) != 0)
+
+def f_mcr(data):
+    """Mean Crossing Rate."""
+    # Conta o número de vezes que o sinal cruza a sua própria média
+    mean_centered_data = data - np.mean(data)
+    return f_zcr(mean_centered_data)
+
+def f_spectral_entropy(data):
+    """Spectral Entropy."""
+    fft_vals = np.abs(fft(data))
+    fft_vals = fft_vals[:len(fft_vals) // 2] # Apenas frequências positivas
+    power_spectrum = fft_vals**2
+    
+    # Evitar divisão por zero se a janela for silenciosa (energia 0)
+    if np.sum(power_spectrum) == 0:
+        return 0.0
+        
+    ps_normalized = power_spectrum / np.sum(power_spectrum)
+    return entropy(ps_normalized)
+
+# --- Funções de Features Temporais (Combinadas / Eixos Múltiplos) ---
+
+def f_corr(data1, data2):
+    """Pairwise Correlation (Correlação entre dois eixos)."""
+    # np.corrcoef pode retornar NaN se um eixo for constante (ex: std=0)
+    corr_matrix = np.corrcoef(data1, data2)
+    if np.isnan(corr_matrix).any():
+        return 0.0 # Retorna 0 se a correlação não puder ser calculada
+    return corr_matrix[0, 1]
+
+def f_sma(data_x, data_y, data_z):
+    """Signal Magnitude Area (normalizada pela janela)."""
+    # Nota: Esta é uma feature temporal, apesar de estar na lista de espectrais do artigo.
+    # É a média da soma das magnitudes absolutas dos 3 eixos.
+    sma = np.mean(np.abs(data_x) + np.abs(data_y) + np.abs(data_z))
     return sma
 
-def calc_eva(window_accel):
-    """Calcula os dois maiores valores próprios (Eigenvalues) da matriz de covariância"""
-    cov_matrix = np.cov(window_accel, rowvar=False)
-    # Usar eigvalsh para matrizes simétricas (como a covariância)
+def f_eva(data_x, data_y, data_z):
+    """Eigenvalues of Dominant Directions (2 maiores autovalores)."""
+    # Combina os 3 eixos numa matriz (N_amostras, 3)
+    data_3d = np.vstack((data_x, data_y, data_z)).T
+    # Calcula a matriz de covariância
+    cov_matrix = np.cov(data_3d, rowvar=False)
+    # Calcula os autovalores (usamos 'h' para matriz simétrica/Hermitiana)
     eigenvalues = np.linalg.eigvalsh(cov_matrix)
     eigenvalues.sort() # Ordena do menor para o maior
-    return eigenvalues[-1], eigenvalues[-2] # Retorna os dois maiores
+    # Retorna os 2 maiores
+    return eigenvalues[-1], eigenvalues[-2] 
+
+# --- Funções de Features Espectrais (Base) ---
+
+def f_dominant_freq(data, fs):
+    """Dominant Frequency (Frequência Dominante)."""
+    n = len(data)
+    if n < 2:
+        return 0.0
+        
+    fft_vals = np.abs(fft(data))[:n // 2]
+    fft_freqs = np.fft.fftfreq(n, d=1/fs)[:n // 2]
+    
+    # Ignora a componente DC (índice 0) para encontrar a frequência dominante
+    # (a componente DC é apenas o 'offset' ou média do sinal)
+    dominant_idx = np.argmax(fft_vals[1:]) + 1 # +1 para compensar o slicing [1:]
+    return fft_freqs[dominant_idx]
+
+def f_energy(data):
+    """ENERGY (Soma dos quadrados das magnitudes FFT normalizada)."""
+    fft_vals = np.abs(fft(data))
+    # Energia de Parseval, normalizada pelo tamanho da janela (N)
+    return np.sum(fft_vals**2) / len(data)
 
 
-# Funções de Features Espectrais (Por Eixo) do artigo
+#função de extração
 
-def calc_energy(window_axis, fs):
-    """Calcula a Energia (Energy) do sinal """
-    T = len(window_axis)
-    fft_vals = np.abs(np.fft.rfft(window_axis))
-    fft_vals = fft_vals[1:] # Exclui a componente DC (índice 0) 
-    energy = np.sum(fft_vals**2) / T
-    return energy
+def extract_features(data, window_size, step_size, fs):
+    """
+    Função principal que aplica o janelamento e extrai o vetor de features
+    para cada segmento válido.
+    Retorna um array NumPy e uma lista com os nomes das features.
+    """
 
-def calc_dominant_frequency(window_axis, fs):
-    """Calcula a Frequência Dominante (Dominant Frequency)"""
-    T = len(window_axis)
-    fft_vals = np.abs(np.fft.rfft(window_axis))**2 
-    fft_freq = np.fft.rfftfreq(T, d=1.0/fs)
-    dominant_idx = np.argmax(fft_vals)
-    return fft_freq[dominant_idx]
+    # 1. Segmentar os dados
+    print(f"A segmentar os dados... (Janela: {window_size}, Passo: {step_size})")
+    segments, labels = segment_data(data, window_size, step_size)
+    print(f"Segmentação concluída. {len(segments)} segmentos válidos encontrados.")
+    
+    if not segments:
+        print("Nenhum segmento válido encontrado.")
+        # Retorna um array vazio e uma lista de nomes vazia
+        return np.array([]), []
+    
+    feature_list_of_dicts = [] # Lista de dicionários, cada dict é uma linha (janela)
 
-def calc_spectral_entropy(window_axis, fs):
-    """Calcula a Entropia Espectral (Spectral Entropy)"""
-    fft_vals = np.abs(np.fft.rfft(window_axis))
-    psd = fft_vals**2 # Power Spectral Density
-    # Normaliza a PSD para que a soma seja 1 (necessário para entropia)
-    psd_norm = psd / np.sum(psd)
-    # Usa a função de entropia da scipy (base 2)
-    return entropy(psd_norm, base=2)
+    axis_indices = {
+        'acc_x': 1, 'acc_y': 2, 'acc_z': 3,
+        'gyro_x': 4, 'gyro_y': 5, 'gyro_z': 6,
+        'mag_x': 7, 'mag_y': 8, 'mag_z': 9,
+    }
+    sensors = ['acc', 'gyro', 'mag']
+    axes = ['x', 'y', 'z']
 
-# Funções de Features Espectrais (Multi-Eixo) do artigo
+    for i, window in enumerate(segments):
+        features = {} # Dicionário para esta janela
+        window_data = {} # Armazena os dados brutos dos eixos desta janela
+        
+        # 1. Armazena os 9 eixos de dados
+        for name, col_idx in axis_indices.items():
+            window_data[name] = window[:, col_idx]
+        
+        # 2. Calcular Features Temporais (por eixo)
+        for key, data_axis in window_data.items():
+            features[f'{key}_mean'] = f_mean(data_axis)
+            features[f'{key}_median'] = f_median(data_axis)
+            features[f'{key}_std'] = f_std(data_axis)
+            features[f'{key}_var'] = f_var(data_axis)
+            features[f'{key}_rms'] = f_rms(data_axis)
+            features[f'{key}_avg_deriv'] = f_avg_deriv(data_axis)
+            features[f'{key}_skew'] = f_skew(data_axis)
+            features[f'{key}_kurt'] = f_kurt(data_axis)
+            features[f'{key}_iqr'] = f_iqr(data_axis)
+            features[f'{key}_zcr'] = f_zcr(data_axis)
+            features[f'{key}_mcr'] = f_mcr(data_axis)
+            features[f'{key}_spectral_entropy'] = f_spectral_entropy(data_axis)
+            
+        # 3. Calcular Features Espectrais (por eixo)
+        for key, data_axis in window_data.items():
+            features[f'{key}_dom_freq'] = f_dominant_freq(data_axis, fs)
+            features[f'{key}_energy'] = f_energy(data_axis)
 
-def calc_aae(window_accel, fs):
-    """Calcula a Energia Média do Acelerómetro (Averaged Acceleration Energy)"""
-    energy_x = calc_energy(window_accel[:, 0], fs)
-    energy_y = calc_energy(window_accel[:, 1], fs)
-    energy_z = calc_energy(window_accel[:, 2], fs)
-    return np.mean([energy_x, energy_y, energy_z])
+        # 4. Calcular Features Combinadas (entre eixos)
+        for sensor in sensors:
+            x, y, z = window_data[f'{sensor}_x'], window_data[f'{sensor}_y'], window_data[f'{sensor}_z']
+            
+            # Correlações
+            features[f'{sensor}_corr_xy'] = f_corr(x, y)
+            features[f'{sensor}_corr_xz'] = f_corr(x, z)
+            features[f'{sensor}_corr_yz'] = f_corr(y, z)
+            
+            # SMA (Signal Magnitude Area)
+            features[f'{sensor}_sma'] = f_sma(x, y, z)
+            
+            # EVA (Eigenvalues)
+            eva1, eva2 = f_eva(x, y, z)
+            features[f'{sensor}_eva1'] = eva1
+            features[f'{sensor}_eva2'] = eva2
+        
+        # 5. Calcular Features Espectrais Agregadas (AAE, ARE)
+        # AAE - Averaged Acceleration Energy
+        e_ax = features['acc_x_energy']
+        e_ay = features['acc_y_energy']
+        e_az = features['acc_z_energy']
+        features['aae'] = np.mean([e_ax, e_ay, e_az])
 
-def calc_are(window_gyro, fs):
-    """Calcula a Energia Média de Rotação (Averaged Rotation Energy)"""
-    energy_x = calc_energy(window_gyro[:, 0], fs)
-    energy_y = calc_energy(window_gyro[:, 1], fs)
-    energy_z = calc_energy(window_gyro[:, 2], fs)
-    return np.mean([energy_x, energy_y, energy_z])
+        # ARE - Averaged Rotation Energy (Giroscópio)
+        e_gx = features['gyro_x_energy']
+        e_gy = features['gyro_y_energy']
+        e_gz = features['gyro_z_energy']
+        features['are'] = np.mean([e_gx, e_gy, e_gz])
+        
+        # 6. Adicionar a label da atividade
+        features['activity_label'] = int(labels[i])
+        
+        # 7. Adicionar o dicionário de features à lista
+        feature_list_of_dicts.append(features)
+
+    #Conversão para NumPy Array
+    
+    feature_names = list(feature_list_of_dicts[0].keys())
+    
+    # 2. Criar uma lista de listas (linhas de dados)
+    data_rows = []
+    for feature_dict in feature_list_of_dicts:
+        # Adiciona os valores na ordem correta
+        data_rows.append([feature_dict[name] for name in feature_names])
+    
+    # 3. Converter para NumPy array
+    np_features = np.array(data_rows, dtype=np.float64)
+    
+    # Retornar o array NumPy e os nomes das features
+    return np_features, feature_names
 
 
 
@@ -829,7 +987,56 @@ def main():
     #dbscanVisualization(dataset)
     
     #4.1 - Significância Estatística
-    estatisticalSignificance(dataset)
+    #statisticalSignificance(dataset)
+
+    #4.2 - Extração de Features
+    data_to_process = dataset.get('part0dev1') # Usando 'part0dev1' como exemplo
+    
+    if data_to_process is not None:
+        print("Iniciando extração de features para 'part0dev1'...")
+        
+        # Chamar a função modificada
+        np_features, feature_names = extract_features(data_to_process, WINDOW_SIZE, STEP_SIZE, SAMPLING_RATE)
+        
+        if np_features.size > 0:
+            print("\nExtração Concluída. Amostra do Vetor de Features (NumPy Array):")
+            
+            # Imprimir o cabeçalho (nomes das features)
+            print(f"\nNomes das Features ({len(feature_names)} colunas):")
+            # Imprime os nomes das features, 5 por linha para legibilidade
+            for i in range(0, len(feature_names), 5):
+                print("  ", feature_names[i:i+5])
+            
+            # Imprimir as primeiras 5 linhas da matriz NumPy
+            print(f"\nAmostra de Dados (primeiras 5 linhas):")
+            print(np_features[:5, :])
+            
+            print(f"\nDimensões do Array (Linhas=segmentos, Colunas=features): {np_features.shape}")
+            
+            # Fazer a contagem de segmentos por atividade (equivalente ao value_counts)
+            try:
+                # Encontrar a coluna 'activity_label'
+                label_col_index = feature_names.index('activity_label')
+                
+                # Extrair todas as labels
+                activity_labels_vector = np_features[:, label_col_index]
+                
+                # Usar np.unique para contar
+                unique_labels, counts = np.unique(activity_labels_vector, return_counts=True)
+                
+                print("\nContagem de segmentos por atividade:")
+                for label, count in zip(unique_labels, counts):
+                    # Usar o dicionário 'activities' global
+                    activity_name = activities.get(int(label), f'Activity {int(label)}')
+                    print(f"  {activity_name:45} | {count} segmentos")
+
+            except ValueError:
+                print("Erro: Não foi possível encontrar a coluna 'activity_label' nos resultados.")
+            except Exception as e:
+                print(f"Erro ao contar atividades: {e}")
+
+    else:
+        print("Não foi possível encontrar dados para 'part0dev1' para processar.")
 
 if __name__ == "__main__":
     main()
