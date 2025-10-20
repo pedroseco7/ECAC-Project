@@ -435,9 +435,9 @@ def dbscanVisualization(data):
         X = np.vstack((data_acceleration, data_gyroscope, data_magnetometer)).T
         
         # REDUZIR MEMÓRIA: Se houver muitos dados, fazer amostragem
-        max_samples = 70000  # Limitar a 70k pontos para evitar MemoryError
+        max_samples = 30000  # Limitar a 30k pontos para evitar MemoryError
         if X.shape[0] > max_samples:
-            print(f"⚠️  Atividade {activities.get(activity, f'Activity {activity}')} tem {X.shape[0]} pontos. Reduzindo para {max_samples}...")
+            print(f" Atividade {activities.get(activity, f'Activity {activity}')} tem {X.shape[0]} pontos. Reduzindo para {max_samples}...")
             indices = np.random.choice(X.shape[0], max_samples, replace=False)
             X = X[indices]
 
