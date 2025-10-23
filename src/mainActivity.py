@@ -8,6 +8,7 @@ from scipy.stats import kstest, ttest_ind, kruskal
 
 from sklearn.cluster import DBSCAN 
 from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
 
 import pandas as pd
 
@@ -933,7 +934,18 @@ def extract_features(data, window_size, step_size, fs):
     # Retornar o array NumPy e os nomes das features
     return np_features, feature_names
 
+def perform_pca(features, n_components=0.95):
 
+    scaler = StandardScaler()
+    features_scaled = scaler.fit_transform(features)
+
+    pca = PCA(n_components=n_components)
+    features_pca = pca.fit_transform(features_scaled)
+
+    print(f"Explained variance ratio by PCA components: {pca.explained_variance_ratio_}")
+    print(f"Total explained variance by selected components: {np.sum(pca.explained_variance_ratio_):.4f}")
+
+    return features_pca, pca, scaler
 
 def main():
 
@@ -1010,7 +1022,7 @@ def main():
             # Imprimir as primeiras 5 linhas da matriz NumPy
             print(f"\nAmostra de Dados (primeiras 5 linhas):")
             print(np_features[:5, :])
-            
+
             print(f"\nDimensões do Array (Linhas=segmentos, Colunas=features): {np_features.shape}")
             
             # Fazer a contagem de segmentos por atividade (equivalente ao value_counts)
@@ -1034,7 +1046,25 @@ def main():
                 print("Erro: Não foi possível encontrar a coluna 'activity_label' nos resultados.")
             except Exception as e:
                 print(f"Erro ao contar atividades: {e}")
+        
+        '''
+        Agora vamos aplicar o PCA ao feature set que temos, prefazendo o total de 147
+        features diferentes para reduzir a dimensionalidade mantendo 95% da variância
+        '''
 
+        feature_data = np.delete(np_features, label_col_index, axis=1)
+        # Aplicar o PCA com 75% do feature set
+        features_pca, pca_model, scaler_model = perform_pca(feature_data, n_components=0.75)
+        print(f"\nDimensões após PCA (Linhas=segmentos, Colunas=componentes PCA): {features_pca.shape}")
+
+        # Exemplificação para um instante (4.4.1)
+        instant_features = feature_data[0]
+        instant_features_scaled = scaler_model.transform(instant_features.reshape(1, -1))
+        instant_pca = pca_model.transform(instant_features_scaled)
+        print(f"\\nFeatures originais do 1º segmento(primeiras 10 de {len(instant_features)})")
+        print(instant_features[:10])
+        print(f"Features após PCA (primeiras 10 de {features_pca.shape[1]}):")
+        print(instant_pca[0][:10])
     else:
         print("Não foi possível encontrar dados para 'part0dev1' para processar.")
 
