@@ -10,6 +10,8 @@ from sklearn.cluster import DBSCAN
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 
+from ReliefF import ReliefF
+
 import pandas as pd
 
 #Global variables
@@ -947,6 +949,17 @@ def perform_pca(features, n_components=0.95):
 
     return features_pca, pca, scaler
 
+# https://medium.com/@yashdagli98/feature-selection-using-relief-algorithms-with-python-example-3c2006e18f83
+
+def perform_reliefF(X, y, n_neighbors=100, n_features_to_select=10):
+    fs = ReliefF(n_neighbors=n_neighbors, n_features_to_select=n_features_to_select)
+    X_train = fs.fit_transform(X, y)
+
+    feature_scores = fs.feature_importances_
+    return X_train, feature_scores, fs
+
+
+
 def main():
 
     #2.
@@ -1067,6 +1080,10 @@ def main():
         print(instant_pca[0][:10])
     else:
         print("Não foi possível encontrar dados para 'part0dev1' para processar.")
+
+
+    # Realizar a seleção de features usando o algoritmo ReliefF
+
 
 if __name__ == "__main__":
     main()
