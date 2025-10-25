@@ -9,6 +9,9 @@ from scipy.stats import kstest, ttest_ind, kruskal
 from sklearn.cluster import DBSCAN 
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
+from sklearn.feature_selection import SelectKBest, f_classif
+from skfeature.function.similarity_based import fisher_score
+
 
 from ReliefF import ReliefF
 
@@ -952,11 +955,20 @@ def perform_pca(features, n_components=0.95):
 # https://medium.com/@yashdagli98/feature-selection-using-relief-algorithms-with-python-example-3c2006e18f83
 
 def perform_reliefF(X, y, n_neighbors=100, n_features_to_select=10):
-    fs = ReliefF(n_neighbors=n_neighbors, n_features_to_select=n_features_to_select)
+    fs = ReliefF(n_neighbors=n_neighbors, n_features_to_keep=n_features_to_select)
     X_train = fs.fit_transform(X, y)
 
-    feature_scores = fs.feature_importances_
+    feature_scores = fs.feature_scores
     return X_train, feature_scores, fs
+
+def perform_Fisher_score(X, y, n_features_to_select=10):
+    scores = fisher_score.fisher_score(X, y)
+    ranked_features = np.argsort(scores)[::-1]  # Ordena da mais relevante para a menos
+
+    top_features_idx = ranked_features[:n_features_to_select]
+    X_train_fisher = X[:, top_features_idx]
+
+    return X_train_fisher, scores, top_features_idx
 
 
 
@@ -1078,6 +1090,41 @@ def main():
         print(instant_features[:10])
         print(f"Features após PCA (primeiras 10 de {features_pca.shape[1]}):")
         print(instant_pca[0][:10])
+
+
+        '''
+        Aplicar o ReliefF para seleção de features
+        '''
+        print("\n=== Seleção de Features com ReliefF ===")
+        X = np.delete(np_features, label_col_index, axis=1)
+        y = np_features[:, label_col_index].astype(int)
+
+        X_train_reliefF, features_scores, fs_model = perform_reliefF(X,y, n_neighbors=100, n_features_to_select=10)
+
+        # Mostrar as 10 features mais relevantes
+        top_features_idx = np.argsort(features_scores)[::-1][:10]
+        print("\nTop 10 Features Selecionadas (com scores):")
+        for i, idx in enumerate(top_features_idx):
+            print(f"{i+1:2d}. {feature_names[idx]} - Score: {features_scores[idx]:.5f}")
+
+
+        '''
+        Aplicar o Fisher Score para seleção de features
+        '''
+        print("\n=== Seleção de Features com Fisher Score ===")
+        X_train_fisher, fisher_scores, top_idx_fisher = perform_Fisher_score(
+            X, y, n_features_to_select=10
+        )
+
+        if X_train_fisher is not None:
+            print("\nTop 10 Features Selecionadas (com scores):")
+            for i, idx in enumerate(top_idx_fisher):
+                print(f"{i+1:2d}. {feature_names[idx]} - Score: {fisher_scores[idx]:.5f}")
+        else:
+            print("Fisher Score não foi aplicado corretamente.")
+        
+
+
     else:
         print("Não foi possível encontrar dados para 'part0dev1' para processar.")
 
