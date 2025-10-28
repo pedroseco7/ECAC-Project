@@ -1027,107 +1027,73 @@ def main():
     #statisticalSignificance(dataset)
 
     #4.2 - Extração de Features
-    data_to_process = dataset.get('part0dev1') # Usando 'part0dev1' como exemplo
+    all_features = []
+    all_feature_names = None
     
-    if data_to_process is not None:
-        print("Iniciando extração de features para 'part0dev1'...")
+    # Processar todos os ficheiros
+    total_files = len(dataset)
+    processed_count = 0
+    
+    for key, data in dataset.items():
+        processed_count += 1
+        print(f"[{processed_count}/{total_files}] Processando {key}...")
         
-        # Chamar a função modificada
-        np_features, feature_names = extract_features(data_to_process, WINDOW_SIZE, STEP_SIZE, SAMPLING_RATE)
+        if data is not None and len(data) > 0:
+            np_features, feature_names = extract_features(data, WINDOW_SIZE, STEP_SIZE, SAMPLING_RATE)
+            
+            if np_features.size > 0:
+                print(f" {np_features.shape[0]} segmentos extraídos")
+                all_features.append(np_features)
+                
+                if all_feature_names is None:
+                    all_feature_names = feature_names
+    
+    # Concatenar tudo
+    if all_features:
+        np_features = np.vstack(all_features)
+        feature_names = all_feature_names
         
-        if np_features.size > 0:
-            print("\nExtração Concluída. Amostra do Vetor de Features (NumPy Array):")
-            
-            # Imprimir o cabeçalho (nomes das features)
-            print(f"\nNomes das Features ({len(feature_names)} colunas):")
-            # Imprime os nomes das features, 5 por linha para legibilidade
-            for i in range(0, len(feature_names), 5):
-                print("  ", feature_names[i:i+5])
-            
-            # Imprimir as primeiras 5 linhas da matriz NumPy
-            print(f"\nAmostra de Dados (primeiras 5 linhas):")
-            print(np_features[:5, :])
-
-            print(f"\nDimensões do Array (Linhas=segmentos, Colunas=features): {np_features.shape}")
-            
-            # Fazer a contagem de segmentos por atividade (equivalente ao value_counts)
-            try:
-                # Encontrar a coluna 'activity_label'
-                label_col_index = feature_names.index('activity_label')
-                
-                # Extrair todas as labels
-                activity_labels_vector = np_features[:, label_col_index]
-                
-                # Usar np.unique para contar
-                unique_labels, counts = np.unique(activity_labels_vector, return_counts=True)
-                
-                print("\nContagem de segmentos por atividade:")
-                for label, count in zip(unique_labels, counts):
-                    # Usar o dicionário 'activities' global
-                    activity_name = activities.get(int(label), f'Activity {int(label)}')
-                    print(f"  {activity_name:45} | {count} segmentos")
-
-            except ValueError:
-                print("Erro: Não foi possível encontrar a coluna 'activity_label' nos resultados.")
-            except Exception as e:
-                print(f"Erro ao contar atividades: {e}")
+        print(f"\nTotal de segmentos: {np_features.shape[0]}")
+        print(f"Total de features: {np_features.shape[1]}")
         
-        '''
-        Agora vamos aplicar o PCA ao feature set que temos, prefazendo o total de 147
-        features diferentes para reduzir a dimensionalidade mantendo 95% da variância
-        '''
-
+        # Contagem por atividade
+        label_col_index = feature_names.index('activity_label')
+        activity_labels_vector = np_features[:, label_col_index]
+        unique_labels, counts = np.unique(activity_labels_vector, return_counts=True)
+        
+        print("\nDistribuição por atividade:")
+        for label, count in zip(unique_labels, counts):
+            activity_name = activities.get(int(label), f'Activity {int(label)}')
+            print(f"  {activity_name:45} | {count:5d} segmentos")
+        
+        # PCA
+        print("\n=== PCA ===")
         feature_data = np.delete(np_features, label_col_index, axis=1)
-        # Aplicar o PCA com 75% do feature set
         features_pca, pca_model, scaler_model = perform_pca(feature_data, n_components=0.75)
-        print(f"\nDimensões após PCA (Linhas=segmentos, Colunas=componentes PCA): {features_pca.shape}")
-
-        # Exemplificação para um instante (4.4.1)
-        instant_features = feature_data[0]
-        instant_features_scaled = scaler_model.transform(instant_features.reshape(1, -1))
-        instant_pca = pca_model.transform(instant_features_scaled)
-        print(f"\\nFeatures originais do 1º segmento(primeiras 10 de {len(instant_features)})")
-        print(instant_features[:10])
-        print(f"Features após PCA (primeiras 10 de {features_pca.shape[1]}):")
-        print(instant_pca[0][:10])
-
-
-        '''
-        Aplicar o ReliefF para seleção de features
-        '''
-        print("\n=== Seleção de Features com ReliefF ===")
+        print(f"Dimensões após PCA: {features_pca.shape}")
+        
+        # ReliefF
+        print("\n=== ReliefF ===")
         X = np.delete(np_features, label_col_index, axis=1)
         y = np_features[:, label_col_index].astype(int)
-
-        X_train_reliefF, features_scores, fs_model = perform_reliefF(X,y, n_neighbors=100, n_features_to_select=10)
-
-        # Mostrar as 10 features mais relevantes
+        
+        X_train_reliefF, features_scores, fs_model = perform_reliefF(X, y, n_neighbors=100, n_features_to_select=10)
+        
         top_features_idx = np.argsort(features_scores)[::-1][:10]
-        print("\nTop 10 Features Selecionadas (com scores):")
+        print("\nTop 10 Features (ReliefF):")
         for i, idx in enumerate(top_features_idx):
             print(f"{i+1:2d}. {feature_names[idx]} - Score: {features_scores[idx]:.5f}")
-
-
-        '''
-        Aplicar o Fisher Score para seleção de features
-        '''
-        print("\n=== Seleção de Features com Fisher Score ===")
-        X_train_fisher, fisher_scores, top_idx_fisher = perform_Fisher_score(
-            X, y, n_features_to_select=10
-        )
-
-        if X_train_fisher is not None:
-            print("\nTop 10 Features Selecionadas (com scores):")
-            for i, idx in enumerate(top_idx_fisher):
-                print(f"{i+1:2d}. {feature_names[idx]} - Score: {fisher_scores[idx]:.5f}")
-        else:
-            print("Fisher Score não foi aplicado corretamente.")
         
-
-
+        # Fisher Score
+        print("\n=== Fisher Score ===")
+        X_train_fisher, fisher_scores, top_idx_fisher = perform_Fisher_score(X, y, n_features_to_select=10)
+        
+        print("\nTop 10 Features (Fisher):")
+        for i, idx in enumerate(top_idx_fisher):
+            print(f"{i+1:2d}. {feature_names[idx]} - Score: {fisher_scores[idx]:.5f}")
+        
     else:
-        print("Não foi possível encontrar dados para 'part0dev1' para processar.")
-
+        print("\nNenhuma feature extraída!")
 
     # Realizar a seleção de features usando o algoritmo ReliefF
 
