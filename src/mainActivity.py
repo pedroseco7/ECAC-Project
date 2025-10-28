@@ -10,7 +10,6 @@ from sklearn.cluster import DBSCAN
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 from sklearn.feature_selection import SelectKBest, f_classif
-from skfeature.function.similarity_based import fisher_score
 
 
 from ReliefF import ReliefF
@@ -276,7 +275,6 @@ def kmeans(X, n_clusters, max_iters=300):
 
         new_centroids = np.array([X[labels == k].mean(axis=0) for k in range(n_clusters)])
         if np.all(centroids == new_centroids):
-            print("ESTABILIZOU")
             break
         centroids = new_centroids
 
@@ -939,7 +937,7 @@ def extract_features(data, window_size, step_size, fs):
     # Retornar o array NumPy e os nomes das features
     return np_features, feature_names
 
-def perform_pca(features, n_components=0.95):
+def perform_pca(features, n_components=0.75):
 
     scaler = StandardScaler()
     features_scaled = scaler.fit_transform(features)
@@ -962,13 +960,13 @@ def perform_reliefF(X, y, n_neighbors=100, n_features_to_select=10):
     return X_train, feature_scores, fs
 
 def perform_Fisher_score(X, y, n_features_to_select=10):
-    scores = fisher_score.fisher_score(X, y)
-    ranked_features = np.argsort(scores)[::-1]  # Ordena da mais relevante para a menos
 
-    top_features_idx = ranked_features[:n_features_to_select]
-    X_train_fisher = X[:, top_features_idx]
+    selector = SelectKBest(score_func=f_classif, k=n_features_to_select)
+    X_new = selector.fittransform(X, y)
 
-    return X_train_fisher, scores, top_features_idx
+    scores = selector.scores
+    top_features_idx = selector.get_support(indices=True)
+    return X_new, scores, top_features_idx 
 
 
 
@@ -1027,6 +1025,7 @@ def main():
     #statisticalSignificance(dataset)
 
     #4.2 - Extração de Features
+    
     all_features = []
     all_feature_names = None
     
@@ -1071,7 +1070,26 @@ def main():
         feature_data = np.delete(np_features, label_col_index, axis=1)
         features_pca, pca_model, scaler_model = perform_pca(feature_data, n_components=0.75)
         print(f"Dimensões após PCA: {features_pca.shape}")
+
+        # Agora vamos aplicar o PCA para um único ponto do dataset, para ver como
+        # muda as dimensões
+
+        print("\n --- Análise de um Ponto Individual com PCA --- ")
+
+        instant_point = feature_data[0]
+        print("Len do Instant Point antes do PCA:")
+        print(len(instant_point))
+        print("10 primeiros valores do Instant Point antes do PCA:")
+        print(instant_point[:10])
         
+        single_point_pca, pca_model_useless, scaler_model_useless = perform_pca(instant_point.reshape(1, -1), n_components=0.75)
+        
+        print("Len do Instant Point depois do PCA:")
+        print(len(single_point_pca))
+        print("10 primeiros valores do Instant Point depois do PCA:")
+        print(single_point_pca[:10])
+        
+        '''
         # ReliefF
         print("\n=== ReliefF ===")
         X = np.delete(np_features, label_col_index, axis=1)
@@ -1097,6 +1115,7 @@ def main():
 
     # Realizar a seleção de features usando o algoritmo ReliefF
 
+    '''
 
 if __name__ == "__main__":
     main()
