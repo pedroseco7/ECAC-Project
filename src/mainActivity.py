@@ -1075,19 +1075,20 @@ def main():
         # muda as dimensões
 
         print("\n --- Análise de um Ponto Individual com PCA --- ")
+        
+        # Seleciona um ponto (a primeira linha do dataset de features)
+        instant_point = feature_data[0:1, :]
 
-        instant_point = feature_data[0]
-        print("Len do Instant Point antes do PCA:")
-        print(len(instant_point))
-        print("10 primeiros valores do Instant Point antes do PCA:")
-        print(instant_point[:10])
+        print(f"Dimensões do ponto antes da transformação: {instant_point.shape}")
+        print(f"10 primeiros valores do ponto antes da transformação: \n{instant_point[0, :10]}")
         
-        single_point_pca, pca_model_useless, scaler_model_useless = perform_pca(instant_point.reshape(1, -1), n_components=0.75)
+        # 1. Escalonar o ponto usando o scaler JÁ TREINADO
+        single_point_scaled = scaler_model.transform(instant_point)
+        # 2. Transformar o ponto escalonado usando o modelo PCA JÁ TREINADO
+        single_point_pca = pca_model.transform(single_point_scaled)
         
-        print("Len do Instant Point depois do PCA:")
-        print(len(single_point_pca))
-        print("10 primeiros valores do Instant Point depois do PCA:")
-        print(single_point_pca[:10])
+        print(f"\nDimensões do ponto após a transformação PCA: {single_point_pca.shape}")
+        print(f"Valores do ponto após a transformação PCA: \n{single_point_pca[0]}")
         
         '''
         # ReliefF
