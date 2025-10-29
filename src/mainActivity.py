@@ -287,7 +287,7 @@ def kmeans(X, n_clusters, max_iters=300):
 
     return centroids, clusters, labels
 
-def kmeansVisualization(data):
+def kmeansVisualization(data, n_clusters):
 
     sensors_types = ['acceleration', 'gyroscope', 'magnetometer']
     activities_data = []
@@ -339,7 +339,7 @@ def kmeansVisualization(data):
 
         X = np.vstack((data_acceleration, data_gyroscope, data_magnetometer)).T
 
-        centroids, clusters, labels = kmeans(X, n_clusters=3)
+        centroids, clusters, labels = kmeans(X, n_clusters=n_clusters)
 
         print("Centroides Finais: ")
         print(centroids)
@@ -1039,7 +1039,7 @@ def main():
     """
     #3.6 - K-Means
     
-    kmeansVisualization(dataset)
+    kmeansVisualization(dataset, 3)
 
     #3.7.1
     #dbscanVisualization(dataset)
