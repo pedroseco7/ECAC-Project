@@ -348,18 +348,41 @@ def kmeansVisualization(data):
         
         fig = plt.figure()
         ax = fig.add_subplot(111, projection='3d')
-        colors = ['blue', 'green', 'orange', 'purple']
+        colors = ['blue', 'green', 'orange', 'purple', 'cyan', 'magenta']
+        outlier_label_added = False
 
         for i, cluster in enumerate(clusters):
-            color = colors [i % len(colors)]
-            ax.scatter(cluster[:, 0], cluster[:, 1], cluster[:, 2], c=color, marker='.', label=f'Cluster {i}')
+            color = colors[i % len(colors)]
+            centroid = centroids[i]
+
+            # Ignorar clusters vazios
+            if len(cluster) == 0:
+                continue
+
+            # Calcular a distância de cada ponto ao seu centroide
+            distances = np.linalg.norm(cluster - centroid, axis=1)
+            
+            # Encontrar o limiar para os 5% mais distantes (95º percentil)
+            threshold = np.percentile(distances, 95)
+            
+            # Separar pontos "core" e "outliers"
+            core_points = cluster[distances < threshold]
+            outlier_points = cluster[distances >= threshold]
+
+            # Plotar os pontos do cluster
+            ax.scatter(core_points[:, 0], core_points[:, 1], core_points[:, 2], c=color, marker='.', label=f'Cluster {i}')
+            
+            # Plotar os 5% mais distantes com um 'X' preto
+            ax.scatter(outlier_points[:, 0], outlier_points[:, 1], outlier_points[:, 2], c='black', marker='x', label='Outliers (Top 5%)' if not outlier_label_added else "")
+            outlier_label_added = True
 
         ax.set_xlabel('Acceleration Module')
         ax.set_ylabel('Gyroscope Module')
         ax.set_zlabel('Magnetometer Module')
         ax.set_title(f'K-Means Clustering - {activities.get(activity, f"Activity {activity}")}')
         ax.legend()
-        plt.show()
+    
+    plt.show()
 
 
 #3.7.1
@@ -1016,7 +1039,7 @@ def main():
     """
     #3.6 - K-Means
     
-    #kmeansVisualization(dataset)
+    kmeansVisualization(dataset)
 
     #3.7.1
     #dbscanVisualization(dataset)
@@ -1025,7 +1048,7 @@ def main():
     #statisticalSignificance(dataset)
 
     #4.2 - Extração de Features
-    
+    '''
     all_features = []
     all_feature_names = None
     
@@ -1090,7 +1113,6 @@ def main():
         print(f"\nDimensões do ponto após a transformação PCA: {single_point_pca.shape}")
         print(f"Valores do ponto após a transformação PCA: \n{single_point_pca[0]}")
         
-        '''
         # ReliefF
         print("\n=== ReliefF ===")
         X = np.delete(np_features, label_col_index, axis=1)
