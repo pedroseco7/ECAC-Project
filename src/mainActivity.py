@@ -11,9 +11,6 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 from sklearn.feature_selection import SelectKBest, f_classif
 
-
-from ReliefF import ReliefF
-
 import pandas as pd
 
 #Global variables
@@ -1048,7 +1045,7 @@ def main():
     #statisticalSignificance(dataset)
 
     #4.2 - Extração de Features
-    '''
+    #'''
     all_features = []
     all_feature_names = None
     
@@ -1105,14 +1102,15 @@ def main():
         print(f"Dimensões do ponto antes da transformação: {instant_point.shape}")
         print(f"10 primeiros valores do ponto antes da transformação: \n{instant_point[0, :10]}")
         
-        # 1. Escalonar o ponto usando o scaler JÁ TREINADO
-        single_point_scaled = scaler_model.transform(instant_point)
-        # 2. Transformar o ponto escalonado usando o modelo PCA JÁ TREINADO
-        single_point_pca = pca_model.transform(single_point_scaled)
-        
-        print(f"\nDimensões do ponto após a transformação PCA: {single_point_pca.shape}")
-        print(f"Valores do ponto após a transformação PCA: \n{single_point_pca[0]}")
-        
+        # Escalonar o ponto com o Scaler treinado anteriormente (pelo feature set todo, no caso)
+        instant_point_scaled = scaler_model.transform(instant_point)
+
+        # Transformar o ponto já scaled com o pca.transform
+        instant_point_pca = pca_model.transform(instant_point_scaled)
+
+        print(f"Dimensões do ponto depois da transformação: {instant_point_pca.shape}")
+        print(f"10 primeiros valores do ponto depois da transformação: \n{instant_point_pca[0, :10]}")
+
         # ReliefF
         print("\n=== ReliefF ===")
         X = np.delete(np_features, label_col_index, axis=1)
@@ -1138,7 +1136,7 @@ def main():
 
     # Realizar a seleção de features usando o algoritmo ReliefF
 
-    '''
+    #'''
 
 if __name__ == "__main__":
     main()
