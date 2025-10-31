@@ -11,6 +11,8 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 from sklearn.feature_selection import SelectKBest, f_classif
 
+from ReliefF import ReliefF
+
 import pandas as pd
 
 #Global variables
@@ -1036,7 +1038,7 @@ def main():
     """
     #3.6 - K-Means
     
-    kmeansVisualization(dataset, 3)
+    #kmeansVisualization(dataset, 3)
 
     #3.7.1
     #dbscanVisualization(dataset)
@@ -1126,17 +1128,29 @@ def main():
         # Fisher Score
         print("\n=== Fisher Score ===")
         X_train_fisher, fisher_scores, top_idx_fisher = perform_Fisher_score(X, y, n_features_to_select=10)
-        
+
         print("\nTop 10 Features (Fisher):")
         for i, idx in enumerate(top_idx_fisher):
             print(f"{i+1:2d}. {feature_names[idx]} - Score: {fisher_scores[idx]:.5f}")
-        
+
+        # Obter os nomes das top features selecionadas pelo Fisher Score
+        top_features_fisher = [feature_names[idx] for idx in top_idx_fisher]
+
+        # Obter os valores dessas features para um instante/segmento específico (o primeiro, neste caso)
+        instante = 0
+        # Usamos diretamente os índices retornados pelo seletor do Fisher
+        valores_fisher = np_features[instante, top_idx_fisher]
+
+        print(f"\nValores das Top 10 Features (Fisher) para o segmento {instante}:")
+
+        # Mostrar o resultado
+        for nome, valor in zip(top_features_fisher, valores_fisher):
+            print(f"{nome}: {valor:.5f}")
+                
     else:
         print("\nNenhuma feature extraída!")
 
-    # Realizar a seleção de features usando o algoritmo ReliefF
-
-    #'''
+        #'''
 
 if __name__ == "__main__":
     main()
