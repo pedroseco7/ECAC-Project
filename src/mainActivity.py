@@ -1047,7 +1047,7 @@ def main():
     #statisticalSignificance(dataset)
 
     #4.2 - Extração de Features
-    #'''
+    '''
     all_features = []
     all_feature_names = None
     
@@ -1150,7 +1150,8 @@ def main():
     else:
         print("\nNenhuma feature extraída!")
 
-        #'''
+    '''
+
 
 if __name__ == "__main__":
     main()
