@@ -3,6 +3,7 @@ import os
 import matplotlib.pyplot as plt
 from sklearn.neighbors import NearestNeighbors
 import random
+import torch
 
 def loadData(deviceId):
     """Carrega dados de todos os ficheiros CSV com tratamento de erros"""
@@ -43,8 +44,10 @@ def analyze_data(data):
     """Vamos aproveitar para excluir atividades com label > 7 do dataset"""
     activity_counts = {}
     for key, values in data.items():
-        data[key] = [row for row in values if int(row[11]) <= 7]
-        for row in values:
+
+        filtered_rows = values[values[:, 11] <= 7]
+        data[key] = filtered_rows
+        for row in filtered_rows:
             activity = int(row[11]) #buscar cada label de atividade
             if activity > 7:
                 continue
@@ -165,6 +168,129 @@ def visualize_smote(dataset, synthetic_samples):
     plt.tight_layout()
     plt.show()
 
+#importar funções do embeddings_extractor.py
+#============================================
+def load_model():
+  ''' Loads the model from the github repo and obtains just the feature encoder. '''
+
+  repo = 'OxWearables/ssl-wearables'
+  # class_num não interessa para extrair features; mas o hub pede este arg
+  model = torch.hub.load(repo, 'harnet5', class_num=5, pretrained=True)
+  model.eval()
+
+  # Passo crucial: ficar só com a parte auto-supervisionada
+  # O README diz que há um 'feature_extractor' (pré-treinado) e um 'classifier' (não treinado). :contentReference[oaicite:14]{index=14}
+  feature_encoder = model.feature_extractor
+  feature_encoder.to("cpu")
+  feature_encoder.eval()
+
+  return feature_encoder
+
+def acc_segmentation(data):
+  ''' Estract ACC segments and their activities '''
+
+  TIMESTAMP_COL = 10
+  MIN_SEGMENT_SIZE = 20
+  fs_in_hz = 51.5
+  win_size = 5000
+  start_time = data[0,TIMESTAMP_COL]
+  end_time = start_time + win_size
+
+  activities = []
+  segments = []
+
+  while end_time < data[-1,TIMESTAMP_COL]:
+    mask = (data[:,TIMESTAMP_COL] >= start_time) & (data[:,TIMESTAMP_COL] < end_time)
+
+    if np.sum(mask) > MIN_SEGMENT_SIZE and np.all(data[mask, -1] == data[mask, -1][0]):
+
+      acc_xyz = data[mask,1:4]
+      activity = data[mask, -1][0]
+      
+      activities.append(activity)
+      segments.append( acc_xyz )
+      
+
+    start_time = end_time - win_size/2
+    end_time = start_time + win_size
+  
+  
+  return segments, activities
+
+def resample_to_30hz_5s(acc_xyz, fs_in_hz):
+    """
+    acc_xyz: np.ndarray shape (N, 3) em m/s^2 (ou g), amostrado a fs_in_hz (float)
+    devolve:
+      acc_resampled: np.ndarray shape (M, 3) já a 30 Hz
+      fs_target: 30.0
+    """
+    fs_target = 30.0
+    win_size = 5 # in seconds
+    t_in = np.arange(acc_xyz.shape[0]) / fs_in_hz
+    t_out = np.arange(0, win_size, 1.0/fs_target)
+
+    acc_resampled = np.zeros((len(t_out), 3), dtype=np.float32)
+    for axis in range(3):
+        acc_resampled[:, axis] = np.interp(t_out, t_in, acc_xyz[:, axis])
+
+    return acc_resampled, fs_target
+#====================================
+
+def embedding_features(dataset):
+    feature_encoder = load_model()
+    all_resampled_segments = [] #guardar todos os segmentos
+    all_activities = [] #guardar todas as atividades
+
+    FS_IN_HZ = 51.5 #frequencia original (está no ficheiro embeddings_extractor.py)
+
+    for key, data in dataset.items():
+
+        #segmentar os dados, apenas as colunas xyz do acc (o acc_segmentation ja faz isso)
+        original_segments, activities = acc_segmentation(data)
+
+        if not original_segments:
+            continue    
+
+        #reamostrar cada segmento para 30Hz e 5s
+        for seg, act in zip(original_segments, activities):
+            acc_resampled, fs_target = resample_to_30hz_5s(seg, FS_IN_HZ)
+            all_resampled_segments.append(acc_resampled)
+            all_activities.append(act)
+        
+    #converter para array numpy
+    x_all = np.array(all_resampled_segments)
+    y_all = np.array(all_activities)
+
+    print("[DEBUG]:", x_all.shape) #(N_SEGMENTOS (soma dos segmentos extraídos dos participantes), N_AMOSTRAS (5s x 30Hz), N_DIMENSOES (x,y,z pedidos do enunciado))
+    print("[DEBUG]:", y_all.shape) #(N_SEGMENTOS,)
+
+    #o modelo que vamos usar espera o input com shape [N_SEGMENTOS, N_DIMENSOES, N_AMOSTRAS], foi o que foi feito no embeddings_extractor.py
+    x_all_transposed = np.transpose(x_all, (0, 2, 1)) 
+    print("[DEBUG]:", x_all_transposed.shape) #(N_SEGMENTOS, N_DIMENSOES, N_AMOSTRAS)
+
+
+    embeddings_list = []
+    batch_size = 64
+
+    with torch.no_grad():
+        for i in range(0, x_all_transposed.shape[0], batch_size):
+            xb = torch.from_numpy(x_all_transposed[i:i+batch_size]).float().to("cpu")
+            eb = feature_encoder(xb) #shape = (batch_size, 64)
+            embeddings_list.append(eb.cpu().numpy())
+    
+    embeddings_3d = np.concatenate(embeddings_list, axis=0)
+    print("[DEBUG]:", embeddings_3d.shape) 
+
+    #eles pedem para que o dataset final tenha o shape [N_SEGMENTS, N_EMBEDDINGS]
+    embeddings_final = np.squeeze(embeddings_3d)
+    print("[DEBUG]:", embeddings_final.shape) #(N_SEGMENTS, N_EMBEDD)
+
+    y_all_reshaped = y_all.reshape(-1, 1) #(N_SEGMENTS, 1)
+
+    EMBEDDINGS_DATASET = np.hstack((embeddings_final, y_all_reshaped)) #(N_SEGMENTS, N_EMBEDDINGS + 1)
+    print("[DEBUG]:", EMBEDDINGS_DATASET.shape)
+    np.save('embeddings_dataset.npy', EMBEDDINGS_DATASET)
+
 def main():
 
     dataset = loadData(None)
@@ -190,7 +316,11 @@ def main():
     samples_sinteticas = smote_activity(dataset_participante3, atividade_alvo, K)
 
     print("Samples sintéticas geradas.")
-
     visualize_smote(dataset_participante3, samples_sinteticas)
+
+    #2.
+    embedding_features(dataset)
+
+
 if __name__ == "__main__":
     main()
