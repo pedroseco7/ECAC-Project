@@ -2,8 +2,21 @@ import numpy as np
 import os
 import matplotlib.pyplot as plt
 from sklearn.neighbors import NearestNeighbors
+from sklearn.model_selection import train_test_split, GroupShuffleSplit
+import re
 import random
 import torch
+import pickle
+
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+from sklearn.feature_selection import SelectKBest, f_classif
+import pickle
+import re
+
+from ReliefF import ReliefF
+
+import pandas as pd
 
 def loadData(deviceId):
     """Carrega dados de todos os ficheiros CSV com tratamento de erros"""
@@ -240,10 +253,17 @@ def embedding_features(dataset):
     feature_encoder = load_model()
     all_resampled_segments = [] #guardar todos os segmentos
     all_activities = [] #guardar todas as atividades
+    all_subjects = []
 
     FS_IN_HZ = 51.5 #frequencia original (está no ficheiro embeddings_extractor.py)
 
     for key, data in dataset.items():
+
+        match = re.search(r'part(\d+)', key)
+        if match:
+            subject_id = int(match.group(1))
+        else:
+            continue
 
         #segmentar os dados, apenas as colunas xyz do acc (o acc_segmentation ja faz isso)
         original_segments, activities = acc_segmentation(data)
@@ -256,10 +276,12 @@ def embedding_features(dataset):
             acc_resampled, fs_target = resample_to_30hz_5s(seg, FS_IN_HZ)
             all_resampled_segments.append(acc_resampled)
             all_activities.append(act)
+            all_subjects.append(subject_id)
         
     #converter para array numpy
     x_all = np.array(all_resampled_segments)
     y_all = np.array(all_activities)
+    s_all = np.array(all_subjects)
 
     print("[DEBUG]:", x_all.shape) #(N_SEGMENTOS (soma dos segmentos extraídos dos participantes), N_AMOSTRAS (5s x 30Hz), N_DIMENSOES (x,y,z pedidos do enunciado))
     print("[DEBUG]:", y_all.shape) #(N_SEGMENTOS,)
@@ -286,18 +308,96 @@ def embedding_features(dataset):
     print("[DEBUG]:", embeddings_final.shape) #(N_SEGMENTS, N_EMBEDD)
 
     y_all_reshaped = y_all.reshape(-1, 1) #(N_SEGMENTS, 1)
+    s_all_reshaped = s_all.reshape(-1, 1) #(N_SEGMENTS, 1)
 
-    EMBEDDINGS_DATASET = np.hstack((embeddings_final, y_all_reshaped)) #(N_SEGMENTS, N_EMBEDDINGS + 1)
+    EMBEDDINGS_DATASET = np.hstack((embeddings_final, y_all_reshaped, s_all_reshaped)) #(N_SEGMENTS, N_EMBEDDINGS + 1)
     print("[DEBUG]:", EMBEDDINGS_DATASET.shape)
     np.save('embeddings_dataset.npy', EMBEDDINGS_DATASET)
 
+    return EMBEDDINGS_DATASET
+
+
+def perform_splits(dataset, method):
+    """
+    Vamos dividir o dataset em Treino (60%), Validação (20%) e Teste (20%)
+    """
+
+    X = dataset[:, :-2]
+    y = dataset[:, -2]
+    groups = dataset[:, -1]
+
+    if method == 'random':
+        print("A aplicar Random Split (Stratified)...")
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=0.4, random_state=42, stratify=y
+        )
+        X_val, X_test, y_val, y_test = train_test_split(
+            X_test, y_test, test_size=0.5, random_state=42, stratify=y_test
+        )
+        return (X_train, y_train), (X_val, y_val), (X_test, y_test)
+    
+    elif method == 'subject':
+        print("A aplicar Subject Split...")
+        splitter = GroupShuffleSplit(n_splits=1, test_size=0.6, random_state=5)
+        train_indices, test_indices = next(splitter.split(X, y, groups))
+        
+        X_train, y_train = X[train_indices], y[train_indices]
+        X_test, y_test, groups_test = X[test_indices], y[test_indices], groups[test_indices]
+
+        splitter = GroupShuffleSplit(n_splits=1, test_size=0.5, random_state=5)
+        val_idx, test_idx = next(splitter.split(X_test, y_test, groups_test))
+
+        X_val, Y_val = X_test[val_idx], y_test[val_idx]
+        X_test, Y_test = X_test[test_idx], y_test[test_idx]
+
+
+        return (X_train, y_train), (X_val, Y_val), (X_test, Y_test)
+        
+def perform_pca(features, n_components=0.75):
+
+    scaler = StandardScaler()
+    features_scaled = scaler.fit_transform(features)
+
+    pca = PCA(n_components=n_components)
+    features_pca = pca.fit_transform(features_scaled)
+
+    print(f"Explained variance ratio by PCA components: {pca.explained_variance_ratio_}")
+    print(f"Total explained variance by selected components: {np.sum(pca.explained_variance_ratio_):.4f}")
+
+    return features_pca, pca, scaler
+
+def perform_reliefF(X, y, n_neighbors=100, n_features_to_select=15):
+    fs = ReliefF(n_neighbors=n_neighbors, n_features_to_keep=n_features_to_select)
+    X_train = fs.fit_transform(X, y)
+
+    feature_scores = fs.feature_scores
+    return X_train, feature_scores, fs
+        
+
 def main():
 
+    features_dataset = None
+    with open('features.pkl', 'rb') as f:
+        features_dataset = pickle.load(f)
+
+        if isinstance(features_dataset, dict):
+            features_dataset = features_dataset['features']
+            print("Dicionário carregado com sucesso.")
+
     dataset = loadData(None)
+
+    embedding_dataset = None
+    embedding_file = 'embeddings_dataset.npy'
+
+    if os.path.exists(embedding_file):
+        embedding_dataset = np.load(embedding_file)
+    else:
+        embedding_dataset = embedding_features(dataset)
+
     
     activity_counts, dataset = analyze_data(dataset)
     print(activity_counts)
-    
+    '''
     # Vamos aplicar o SMOTE para gerar e visualizar 3 novas samples
     # da atividade 4, do participante 3
     # Atenção, só devem ser utilizadas as samples do participante 3 para gerar as novas samples
@@ -320,6 +420,33 @@ def main():
 
     #2.
     embedding_features(dataset)
+    '''
+    #3. Vamos fazer splits nos dois sets, dentro do mesmo subject e entre subjects
+    #3.1 Vamos começar pelo TVT de 60%/20%/20%
+    print("Divisão de Treino/Validação/Teste em 60%/20%/20% do EMBEDDING FEATURE SET")
+    (e_X_train, e_Y_train), (e_X_val, e_Y_val), (e_X_test, e_Y_test) = perform_splits(embedding_dataset, 'random')
+    print(f'Treino: {e_X_train.shape[0]} amostras')
+    print(f'Validação: {e_X_val.shape[0]} amostras')
+    print(f'Teste: {e_X_test.shape[0]} amostras')
+
+    print("Divisão de Treino/Validação/Teste em 60%/20%/20% do FEATURES SET")
+    (X_train, Y_train), (X_val, Y_val), (X_test, Y_test) = perform_splits(features_dataset, 'random')
+    print(f'Treino: {X_train.shape[0]} amostras')
+    print(f'Validação: {X_val.shape[0]} amostras')
+    print(f'Teste: {X_test.shape[0]} amostras')
+
+    print("Divisão de Treino/Validação/Teste em 60%/20%/20% do EMBEDDING FEATURE SET com Subject Split")
+    (e_X_train, e_Y_train), (e_X_val, e_Y_val), (e_X_test, e_Y_test) = perform_splits(embedding_dataset, 'subject')
+    print(f"Treino: {e_X_train.shape[0]} amostras")
+    print(f"Validação: {e_X_val.shape[0]} amostras")
+    print(f"Teste: {e_X_test.shape[0]} amostras")
+
+    print("Divisão de Treino/Validação/Teste em 60%/20%/20% do FEATURES SET com Subject Split")
+    (X_train, Y_train), (X_val, Y_val), (X_test, Y_test) = perform_splits(features_dataset, 'subject')
+    print(f"Treino: {X_train.shape[0]} amostras")
+    print(f"Validação: {X_val.shape[0]} amostras")
+    print(f"Teste: {X_test.shape[0]} amostras")
+
 
 
 if __name__ == "__main__":
