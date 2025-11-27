@@ -138,11 +138,10 @@ def smote_activity(dataset, activity_label, K):
 
 def visualize_smote(dataset, synthetic_samples):
     """
-    2D scatter plot dos dados originais e sintéticos
-    Apenas as duas primeiras características são usadas para visualização
-    0: feature 0
-    1: feature 1
-    11: activity label
+    2D scatter plot dos dados originais e sintéticos.
+    1: Aceleração X
+    2: Aceleração Y
+    11: Activity Label
     """
     colors = ['r', 'g', 'b', 'c', 'm', 'y', 'k']
     highlighted_color_for_synthetic = 'orange'
@@ -157,25 +156,29 @@ def visualize_smote(dataset, synthetic_samples):
                 continue
             activity_sets[activity].append(row)
 
-    # Plotar uma vez por atividade
+    # Plotar uma vez por atividade (Dados Originais)
     for activity, rows in activity_sets.items():
         if len(rows) == 0:
             continue
-        np.array(rows)
         arr = np.vstack(rows)
-        plt.scatter(arr[:, 0], arr[:, 1], c=colors[activity - 1], marker='o', s=8, alpha=0.5, label=f'Atividade {activity}')
+
+        plt.scatter(arr[:, 1], arr[:, 2], c=colors[activity - 1], marker='o', s=8, alpha=0.5, label=f'Atividade {activity}')
 
     # Plotar pontos sintéticos por atividade
     synth = np.array(synthetic_samples)
-    for activity in range(1, 8):
-        rows = synth[synth[:, 11] == activity]
-        if rows.shape[0] == 0:
-            continue
-        plt.scatter(rows[:, 0], rows[:, 1], c=highlighted_color_for_synthetic, marker='x', s=30, alpha=1, label=f'Sintética Atividade {activity}')
+    
+    # Verificar se existem samples sintéticas antes de tentar plotar
+    if synth.ndim > 1 and synth.shape[0] > 0:
+        for activity in range(1, 8):
+            rows = synth[synth[:, 11] == activity]
+            if rows.shape[0] == 0:
+                continue
+            
+            plt.scatter(rows[:, 1], rows[:, 2], c=highlighted_color_for_synthetic, marker='x', s=50, linewidths=2, label=f'Sintética Atividade {activity}')
 
-    plt.title('Visualização de Samples Originais e Sintéticas')
-    plt.xlabel('Feature 0')
-    plt.ylabel('Feature 1')
+    plt.title('Visualização de Samples Originais e Sintéticas (Feature 1 vs Feature 2)')
+    plt.xlabel('Eixo X do Acelerometro')
+    plt.ylabel('Eixo Y do Acelerometro')
     plt.legend(loc='best', fontsize='small')
     plt.grid(True)
     plt.tight_layout()
@@ -397,7 +400,7 @@ def main():
     
     activity_counts, dataset = analyze_data(dataset)
     print(activity_counts)
-    '''
+    
     # Vamos aplicar o SMOTE para gerar e visualizar 3 novas samples
     # da atividade 4, do participante 3
     # Atenção, só devem ser utilizadas as samples do participante 3 para gerar as novas samples
@@ -420,7 +423,7 @@ def main():
 
     #2.
     embedding_features(dataset)
-    '''
+    
     #3. Vamos fazer splits nos dois sets, dentro do mesmo subject e entre subjects
     #3.1 Vamos começar pelo TVT de 60%/20%/20%
     print("Divisão de Treino/Validação/Teste em 60%/20%/20% do EMBEDDING FEATURE SET")
