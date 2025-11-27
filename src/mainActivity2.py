@@ -331,6 +331,7 @@ def perform_splits(dataset, method):
 
     if method == 'random':
         print("A aplicar Random Split (Stratified)...")
+
         X_train, X_test, y_train, y_test = train_test_split(
             X, y, test_size=0.4, random_state=42, stratify=y
         )
@@ -376,6 +377,51 @@ def perform_reliefF(X, y, n_neighbors=100, n_features_to_select=15):
     feature_scores = fs.feature_scores
     return X_train, feature_scores, fs
         
+class our_KNN_Classifier:
+    def __init__(self,k,distance_metric='euclidean'):
+        self.k = k
+        self.distance_metric = distance_metric
+        self.X_train = None
+        self.y_train = None
+
+    def fit(self,X_train,Y_train):
+        self.X_train = np.array(X_train)
+        self.y_train = np.array(Y_train)
+        return self
+    
+    def predict(self,X_test):
+        #prever as labels de multiplas amostras
+        X_test = np.array(X_test)
+        predictions = []
+        for x in X_test:
+            # (x - self.X_train) subtrai x a TODAS as linhas de treino de uma vez
+            if self.distance_metric == 'euclidean':
+                distances = np.sqrt(np.sum((self.X_train - x) ** 2, axis=1))
+            
+            elif self.distance_metric == 'manhattan':
+                distances = np.sum(np.abs(self.X_train - x), axis=1)
+            
+            else:
+                raise ValueError("Métrica desconhecida.")
+            
+            #obter os índices dos k vizinhos mais próximos
+            k_nearest_indices = np.argsort(distances)[:self.k]
+            
+            #buscar as labels correspondentes
+            k_nearest_labels = self.y_train[k_nearest_indices]
+
+            #votar na label mais comum
+            unique_labels, counts = np.unique(k_nearest_labels, return_counts=True)
+            most_common_idx = np.argmax(counts)
+            predictions.append(unique_labels[most_common_idx])
+
+        return np.array(predictions)
+    
+    def score(self, X_test, y_test):
+        predictions = self.predict(X_test)
+        return np.mean(predictions == y_test)
+        
+
 
 def main():
 
@@ -449,6 +495,31 @@ def main():
     print(f"Treino: {X_train.shape[0]} amostras")
     print(f"Validação: {X_val.shape[0]} amostras")
     print(f"Teste: {X_test.shape[0]} amostras")
+
+    print("Treino e avaliacao do KNN")
+
+    k_values = [3,5,7,10]
+
+    for k in k_values:
+        print(f"\nKNN com k={k}")
+
+        knn = our_KNN_Classifier(k=k, distance_metric='euclidean')
+        knn.fit(X_train, Y_train)
+
+        y_pred = knn.predict(X_val)
+
+        accuracy = knn.score(X_val, Y_val)
+        print(f"Accuracy: {accuracy:.4f}")
+
+    print("\nComparar com sklearn KNeighborsClassifier")
+    from sklearn.neighbors import KNeighborsClassifier
+    
+    knn_sklearn = KNeighborsClassifier(n_neighbors=5)
+    knn_sklearn.fit(X_train, Y_train)
+    y_pred_sklearn = knn_sklearn.predict(X_val)
+
+    accuracy_sklearn = np.mean(y_pred_sklearn == Y_val)
+    print(f"Accuracy sklearn KNeighborsClassifier: {accuracy_sklearn:.4f}")
 
 
 
