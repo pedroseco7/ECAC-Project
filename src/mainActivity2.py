@@ -3,6 +3,7 @@ import os
 import matplotlib.pyplot as plt
 from sklearn.neighbors import NearestNeighbors
 from sklearn.model_selection import train_test_split, GroupShuffleSplit
+from sklearn.metrics import confusion_matrix, accuracy_score, precision_recall_fscore_support
 import re
 import random
 import torch
@@ -424,7 +425,85 @@ class our_KNN_Classifier:
         predictions = self.predict(X_test)
         return np.mean(predictions == y_test)
         
+def calculate_classification_metrics(y_true, y_pred, activity_names=None):
 
+    y_pred = np.array(y_pred)
+    y_true = np.array(y_true)
+
+    accuracy = accuracy_score(y_true, y_pred)
+    error_rate = 1.0 - accuracy
+    
+    print(f"\n{'='*40}")
+    print(f"RESUMO GLOBAL")
+    print(f"{'='*40}")
+    print(f"Accuracy Global:    {accuracy:.4f}")
+    print(f"Error Rate Global:  {error_rate:.4f}")
+
+    # 3. Matriz de Confusão
+    cm = confusion_matrix(y_true, y_pred)
+    print("\nMatriz de Confusão:")
+    print(cm)
+
+    #Métricas por Classe
+    #TP, TN, FP, FN para cada classe
+    classes = np.unique(np.concatenate([y_true, y_pred]))
+    
+    if activity_names is None:
+        activity_names = [f"Class {c}" for c in classes]
+    
+    metrics_per_class = []
+
+    #precisão, recall, f1 via sklearn para validação
+    precisions, recalls, f1s, supports = precision_recall_fscore_support(y_true, y_pred, average=None, zero_division=0)
+
+    # Calcular TP, TN, FP, FN
+    FP = cm.sum(axis=0) - np.diag(cm)  
+    FN = cm.sum(axis=1) - np.diag(cm)
+    TP = np.diag(cm)
+    TN = cm.sum() - (FP + FN + TP)
+
+    # Conversão para evitar divisão por zero
+    with np.errstate(divide='ignore', invalid='ignore'):
+        TPR = TP / (TP + FN) 
+        TNR = TN / (TN + FP) 
+        FPR = FP / (FP + TN)
+        FNR = FN / (TP + FN) 
+        Precision = TP / (TP + FP)
+        
+    # Limpeza de NaNs
+    TPR = np.nan_to_num(TPR)
+    FPR = np.nan_to_num(FPR)
+    Precision = np.nan_to_num(Precision)
+    
+    # Construir DataFrame
+    df_metrics = pd.DataFrame({
+        'Activity': activity_names,
+        'Precision': Precision,
+        'Recall (TPR)': TPR,
+        'F1-Score': f1s,
+        'FPR (False Pos Rate)': FPR,
+        'Support': supports
+    })
+
+    print(f"\n{'='*40}")
+    print(f"DETALHE POR CLASSE")
+    print(f"{'='*40}")
+    print(df_metrics.round(4).to_string(index=False))
+
+    #Médias Globais (Macro Average)
+    # A média "Global" real de métricas por classe costuma ser a Macro Average (média simples das classes)
+    # Ou Weighted Average (ponderada pelo suporte). 
+    # Vou apresentar a Macro para veres o desempenho médio "por atividade".
+    
+    print(f"\n{'='*40}")
+    print(f"MÉDIAS GLOBAIS (MACRO)")
+    print(f"{'='*40}")
+    print(f"Global Precision (Macro): {np.mean(Precision):.4f}")
+    print(f"Global Recall/TPR (Macro):{np.mean(TPR):.4f}")
+    print(f"Global FPR (Macro):       {np.mean(FPR):.4f}")
+    print(f"Global F1-Score (Macro):  {np.mean(f1s):.4f}")
+    
+    return cm, df_metrics
 
 def main():
 
@@ -572,6 +651,11 @@ def main():
         # Imprimir linha da tabela
         print(f"{exp_name:<50} | {X_tr.shape[1]:<5} | {acc_our:.4f}     | {acc_sk:.4f}")
 
+        if "ReliefF" in exp_name: # Exemplo: detalhar apenas quando usamos ReliefF
+            print(f"\n>>> RELATÓRIO DETALHADO PARA: {exp_name}")
+            #prever todas as labels primeiro
+            y_pred_our = knn_our.predict(X_v) 
+            calculate_classification_metrics(y_v, y_pred_our)
 
 if __name__ == "__main__":
     main()
