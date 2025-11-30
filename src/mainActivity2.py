@@ -357,25 +357,28 @@ def perform_splits(dataset, method):
 
         return (X_train, y_train), (X_val, Y_val), (X_test, Y_test)
         
-def perform_pca(features, n_components=0.75):
+def perform_pca(x_train, x_val, n_components=0.75):
 
     scaler = StandardScaler()
-    features_scaled = scaler.fit_transform(features)
+    features_x_scaled = scaler.fit_transform(x_train)
+    features_val_scaled = scaler.transform(x_val)
 
     pca = PCA(n_components=n_components)
-    features_pca = pca.fit_transform(features_scaled)
+    features_pca = pca.fit_transform(features_x_scaled)
+    features_val_pca = pca.transform(features_val_scaled)
 
     print(f"Explained variance ratio by PCA components: {pca.explained_variance_ratio_}")
     print(f"Total explained variance by selected components: {np.sum(pca.explained_variance_ratio_):.4f}")
 
-    return features_pca, pca, scaler
+    return features_pca, features_val_pca
 
-def perform_reliefF(X, y, n_neighbors=100, n_features_to_select=15):
+def perform_reliefF(x_train, y_train, x_val, y_val, n_neighbors=100, n_features_to_select=15):
     fs = ReliefF(n_neighbors=n_neighbors, n_features_to_keep=n_features_to_select)
-    X_train = fs.fit_transform(X, y)
+    X_train = fs.fit_transform(x_train, y_train)
+    X_val = fs.transform(x_val, y_val)
 
     feature_scores = fs.feature_scores
-    return X_train, feature_scores, fs
+    return X_train, X_val, feature_scores
         
 class our_KNN_Classifier:
     def __init__(self,k,distance_metric='euclidean'):
@@ -470,57 +473,104 @@ def main():
     #2.
     embedding_features(dataset)
     
-    #3. Vamos fazer splits nos dois sets, dentro do mesmo subject e entre subjects
-    #3.1 Vamos começar pelo TVT de 60%/20%/20%
-    print("Divisão de Treino/Validação/Teste em 60%/20%/20% do EMBEDDING FEATURE SET")
-    (e_X_train, e_Y_train), (e_X_val, e_Y_val), (e_X_test, e_Y_test) = perform_splits(embedding_dataset, 'random')
-    print(f'Treino: {e_X_train.shape[0]} amostras')
-    print(f'Validação: {e_X_val.shape[0]} amostras')
-    print(f'Teste: {e_X_test.shape[0]} amostras')
+    splits = {'random': {}, 'subject': {}}
 
-    print("Divisão de Treino/Validação/Teste em 60%/20%/20% do FEATURES SET")
-    (X_train, Y_train), (X_val, Y_val), (X_test, Y_test) = perform_splits(features_dataset, 'random')
-    print(f'Treino: {X_train.shape[0]} amostras')
-    print(f'Validação: {X_val.shape[0]} amostras')
-    print(f'Teste: {X_test.shape[0]} amostras')
+    # Random Splits
+    print(" > Random Splits...")
+    splits['random']['features'] = perform_splits(features_dataset, 'random')
+    splits['random']['embedding'] = perform_splits(embedding_dataset, 'random')
 
-    print("Divisão de Treino/Validação/Teste em 60%/20%/20% do EMBEDDING FEATURE SET com Subject Split")
-    (e_X_train, e_Y_train), (e_X_val, e_Y_val), (e_X_test, e_Y_test) = perform_splits(embedding_dataset, 'subject')
-    print(f"Treino: {e_X_train.shape[0]} amostras")
-    print(f"Validação: {e_X_val.shape[0]} amostras")
-    print(f"Teste: {e_X_test.shape[0]} amostras")
+    # Subject Splits
+    print(" > Subject Splits...")
+    splits['subject']['features'] = perform_splits(features_dataset, 'subject')
+    splits['subject']['embedding'] = perform_splits(embedding_dataset, 'subject')
 
-    print("Divisão de Treino/Validação/Teste em 60%/20%/20% do FEATURES SET com Subject Split")
-    (X_train, Y_train), (X_val, Y_val), (X_test, Y_test) = perform_splits(features_dataset, 'subject')
-    print(f"Treino: {X_train.shape[0]} amostras")
-    print(f"Validação: {X_val.shape[0]} amostras")
-    print(f"Teste: {X_test.shape[0]} amostras")
-
-    print("Treino e avaliacao do KNN")
-
-    k_values = [3,5,7,10]
-
-    for k in k_values:
-        print(f"\nKNN com k={k}")
-
-        knn = our_KNN_Classifier(k=k, distance_metric='euclidean')
-        knn.fit(X_train, Y_train)
-
-        y_pred = knn.predict(X_val)
-
-        accuracy = knn.score(X_val, Y_val)
-        print(f"Accuracy: {accuracy:.4f}")
-
-    print("\nComparar com sklearn KNeighborsClassifier")
-    from sklearn.neighbors import KNeighborsClassifier
+    # --- 3. PRÉ-PROCESSAMENTO (Scaler + PCA + ReliefF) ---
+    print("\n--- 3. PROCESSAMENTO (SCALER / PCA / RELIEFF) ---")
     
-    knn_sklearn = KNeighborsClassifier(n_neighbors=5)
-    knn_sklearn.fit(X_train, Y_train)
-    y_pred_sklearn = knn_sklearn.predict(X_val)
+    # Vamos criar um dicionário final de "Experiências" prontas a testar no KNN
+    experiments = {}
 
-    accuracy_sklearn = np.mean(y_pred_sklearn == Y_val)
-    print(f"Accuracy sklearn KNeighborsClassifier: {accuracy_sklearn:.4f}")
+    for split_name, datasets in splits.items():
+        for data_type, (data_train, data_val, data_test) in datasets.items():
+            
+            # Desempacotar (X, y)
+            X_train, y_train = data_train
+            X_val, y_val = data_val
+            # X_test, y_test = data_test (Não usamos teste agora, só validação)
 
+            # NOME BASE: ex: "Random - Features"
+            base_name = f"{split_name.capitalize()} - {data_type.capitalize()}"
+
+            # --- A. STANDARD (Só Scaler) ---
+            scaler = StandardScaler()
+            X_train_sc = scaler.fit_transform(X_train)
+            X_val_sc = scaler.transform(X_val)
+            
+            experiments[f"{base_name} (Normal)"] = (X_train_sc, y_train, X_val_sc, y_val)
+
+            # --- B. PCA (90%) ---
+            # PCA não faz sentido em Embeddings (já são reduzidos), mas podemos testar
+            if data_type == 'features': 
+                pca = PCA(n_components=0.90)
+                X_train_pca = pca.fit_transform(X_train_sc)
+                X_val_pca = pca.transform(X_val_sc)
+                experiments[f"{base_name} (PCA 90%)"] = (X_train_pca, y_train, X_val_pca, y_val)
+
+            # --- C. FEATURE SELECTION (ReliefF) ---
+            if data_type == 'features':
+                print(f"   > A calcular ReliefF para {base_name} (pode demorar)...")
+                
+                # Instanciar ReliefF
+                # n_features_to_keep: quantas features queremos no final (ex: 30)
+                # n_neighbors: quantos vizinhos usa para calcular os pesos (ex: 100)
+                n_feats = 15
+                fs = ReliefF(n_neighbors=100, n_features_to_keep=n_feats)
+                
+                # Fit_transform no treino
+                X_train_sel = fs.fit_transform(X_train_sc, y_train)
+                
+                # Transform na validação
+                # O ReliefF original nem sempre tem .transform(). 
+                # Se der erro aqui, temos de selecionar as colunas manualmente.
+                try:
+                    X_val_sel = fs.transform(X_val_sc)
+                except AttributeError:
+                    # Se o método transform não existir, usamos os índices das melhores features
+                    # O ReliefF costuma guardar os índices em fs.top_features[:n_feats]
+                    if hasattr(fs, 'top_features'):
+                        top_indices = fs.top_features[:n_feats]
+                        X_val_sel = X_val_sc[:, top_indices]
+                    else:
+                        print("ERRO: Não consegui aplicar ReliefF na validação.")
+                        X_val_sel = X_val_sc[:, :n_feats] # Fallback (pega as primeiras)
+
+                experiments[f"{base_name} (ReliefF {n_feats})"] = (X_train_sel, y_train, X_val_sel, y_val)
+    
+    # --- 4. AVALIAÇÃO KNN (OUR vs SKLEARN) ---
+    print("\n" + "="*80)
+    print(f"{'EXPERIÊNCIA':<50} | {'FEATS':<5} | {'OUR KNN':<10} | {'SKLEARN':<10}")
+    print("="*80)
+
+    from sklearn.neighbors import KNeighborsClassifier # Importar o do sklearn
+    k = 5 
+    
+    # Ordenar as chaves para leitura fácil
+    for exp_name in sorted(experiments.keys()):
+        X_tr, y_tr, X_v, y_v = experiments[exp_name]
+        
+        # 1. O Vosso KNN
+        knn_our = our_KNN_Classifier(k=k, distance_metric='euclidean')
+        knn_our.fit(X_tr, y_tr)
+        acc_our = knn_our.score(X_v, y_v)
+        
+        # 2. Sklearn KNN (Baseline)
+        knn_sk = KNeighborsClassifier(n_neighbors=k, metric='euclidean')
+        knn_sk.fit(X_tr, y_tr)
+        acc_sk = knn_sk.score(X_v, y_v)
+        
+        # Imprimir linha da tabela
+        print(f"{exp_name:<50} | {X_tr.shape[1]:<5} | {acc_our:.4f}     | {acc_sk:.4f}")
 
 
 if __name__ == "__main__":
