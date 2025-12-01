@@ -19,6 +19,8 @@ from ReliefF import ReliefF
 
 import pandas as pd
 
+from scipy.stats import wilcoxon
+
 def loadData(deviceId):
     """Carrega dados de todos os ficheiros CSV com tratamento de erros"""
     base_dir = 'dataset'
@@ -321,43 +323,41 @@ def embedding_features(dataset):
     return EMBEDDINGS_DATASET
 
 
-def perform_splits(dataset, method):
+def perform_splits(dataset, method, random_seed):
     """
-    Vamos dividir o dataset em Treino (60%), Validação (20%) e Teste (20%)
+    Versão atualizada para aceitar random_seed dinâmico.
     """
-
     X = dataset[:, :-2]
     y = dataset[:, -2]
     groups = dataset[:, -1]
 
     if method == 'random':
-        print("A aplicar Random Split (Stratified)...")
-
+        # Stratified Split
         X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=0.4, random_state=42, stratify=y
+            X, y, test_size=0.4, random_state=random_seed, stratify=y
         )
+        # Validation Split
         X_val, X_test, y_val, y_test = train_test_split(
-            X_test, y_test, test_size=0.5, random_state=42, stratify=y_test
+            X_test, y_test, test_size=0.5, random_state=random_seed, stratify=y_test
         )
         return (X_train, y_train), (X_val, y_val), (X_test, y_test)
     
     elif method == 'subject':
-        print("A aplicar Subject Split...")
-        splitter = GroupShuffleSplit(n_splits=1, test_size=0.6, random_state=5)
+        # Split baseado em sujeitos (GroupShuffleSplit)
+        splitter = GroupShuffleSplit(n_splits=1, test_size=0.6, random_state=random_seed)
         train_indices, test_indices = next(splitter.split(X, y, groups))
         
         X_train, y_train = X[train_indices], y[train_indices]
-        X_test, y_test, groups_test = X[test_indices], y[test_indices], groups[test_indices]
+        X_test_temp, y_test_temp, groups_test = X[test_indices], y[test_indices], groups[test_indices]
 
-        splitter = GroupShuffleSplit(n_splits=1, test_size=0.5, random_state=5)
-        val_idx, test_idx = next(splitter.split(X_test, y_test, groups_test))
+        # Validation Split nos sujeitos restantes
+        splitter_val = GroupShuffleSplit(n_splits=1, test_size=0.5, random_state=random_seed)
+        val_idx, test_idx = next(splitter_val.split(X_test_temp, y_test_temp, groups_test))
 
-        X_val, Y_val = X_test[val_idx], y_test[val_idx]
-        X_test, Y_test = X_test[test_idx], y_test[test_idx]
+        X_val, y_val = X_test_temp[val_idx], y_test_temp[val_idx]
+        X_test, y_test = X_test_temp[test_idx], y_test_temp[test_idx]
 
-
-        return (X_train, y_train), (X_val, Y_val), (X_test, Y_test)
-        
+        return (X_train, y_train), (X_val, y_val), (X_test, y_test)    
 def perform_pca(x_train, x_val, n_components=0.75):
 
     scaler = StandardScaler()
@@ -554,6 +554,53 @@ def hyperparameter_tuning_and_eval(X_train, y_train, X_val, y_val, X_test, y_tes
     # Retornar as previsões e o target real para usares no calculate_classification_metrics
     return y_test, y_pred_test, best_k
 
+def perform_hypothesis_testing(results_dict):
+    """
+    Compara o melhor modelo contra todos os outros usando Wilcoxon Signed-Rank Test.
+    results_dict: { 'ModelName': [acc_run1, acc_run2, ..., acc_runN] }
+
+    Escolhi este teste estatistico porque assume que os dados nao seguem uma distribuicao normal, ao contrario do t-test. Usa dados emparelhados (mesmas runs para cada modelo) e testa se as medianas das diferencas sao significativamente diferentes de zero.
+    """
+    print("   ANÁLISE ESTATÍSTICA (WILCOXON SIGNED-RANK TEST)")
+
+    # 1. Calcular médias para encontrar o "Melhor Modelo"
+    means = {k: np.mean(v) for k, v in results_dict.items()}
+    best_model_name = max(means, key=means.get)
+    best_model_scores = results_dict[best_model_name]
+    
+    print(f"MELHOR MODELO (Média): {best_model_name} (Acc: {means[best_model_name]:.4f})")
+    print(f"{'Comparison Model':<40} | {'p-value':<12} | {'Significant?':<10}")
+
+    stats_results = []
+
+    # 2. Comparar o melhor contra os restantes
+    alpha = 0.05
+    for model_name, scores in results_dict.items():
+        if model_name == best_model_name:
+            continue
+        
+        # Teste de Wilcoxon (alternative='greater' testa se o Best é > Other)
+        # Nota: Se as accuracies forem idênticas em todas as runs, o teste falha (zero diff).
+        try:
+            stat, p_value = wilcoxon(best_model_scores, scores, alternative='greater')
+            
+            is_significant = p_value < alpha
+            sig_str = "YES" if is_significant else "NO"
+            
+            print(f"{model_name:<40} | {p_value:.6f}     | {sig_str}")
+            
+            stats_results.append({
+                'Model': model_name,
+                'p-value': p_value,
+                'Significant Difference': is_significant
+            })
+            
+        except ValueError:
+            # Acontece se todos os valores forem exatamente iguais
+            print(f"{model_name:<40} | N/A (Equal)  | NO")
+
+    return best_model_name, pd.DataFrame(stats_results)
+
 def main():
     # --- 1. CARREGAR DADOS ---
     print("--- 1. CARREGAR DADOS ---")
@@ -715,6 +762,7 @@ def main():
     # Opcional: Guardar em CSV
     df_results.to_csv("resultados_finais_knn.csv", index=False)
     print("Tabela guardada em 'resultados_finais_knn.csv'")
+    
 
 if __name__ == "__main__":
     main()
