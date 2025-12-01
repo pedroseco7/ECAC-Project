@@ -322,42 +322,42 @@ def embedding_features(dataset):
 
     return EMBEDDINGS_DATASET
 
+def perform_splits(dataset, method):
+    """
+    Vamos dividir o dataset em Treino (60%), Validação (20%) e Teste (20%)
+    """
 
-def perform_splits(dataset, method, random_seed):
-    """
-    Versão atualizada para aceitar random_seed dinâmico.
-    """
     X = dataset[:, :-2]
     y = dataset[:, -2]
     groups = dataset[:, -1]
 
     if method == 'random':
-        # Stratified Split
+        print("A aplicar Random Split (Stratified)...")
+
         X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=0.4, random_state=random_seed, stratify=y
+            X, y, test_size=0.4, random_state=42, stratify=y
         )
-        # Validation Split
         X_val, X_test, y_val, y_test = train_test_split(
-            X_test, y_test, test_size=0.5, random_state=random_seed, stratify=y_test
+            X_test, y_test, test_size=0.5, random_state=42, stratify=y_test
         )
         return (X_train, y_train), (X_val, y_val), (X_test, y_test)
     
     elif method == 'subject':
-        # Split baseado em sujeitos (GroupShuffleSplit)
-        splitter = GroupShuffleSplit(n_splits=1, test_size=0.6, random_state=random_seed)
+        print("A aplicar Subject Split...")
+        splitter = GroupShuffleSplit(n_splits=1, test_size=0.6, random_state=5)
         train_indices, test_indices = next(splitter.split(X, y, groups))
         
         X_train, y_train = X[train_indices], y[train_indices]
-        X_test_temp, y_test_temp, groups_test = X[test_indices], y[test_indices], groups[test_indices]
+        X_test, y_test, groups_test = X[test_indices], y[test_indices], groups[test_indices]
 
-        # Validation Split nos sujeitos restantes
-        splitter_val = GroupShuffleSplit(n_splits=1, test_size=0.5, random_state=random_seed)
-        val_idx, test_idx = next(splitter_val.split(X_test_temp, y_test_temp, groups_test))
+        splitter = GroupShuffleSplit(n_splits=1, test_size=0.5, random_state=5)
+        val_idx, test_idx = next(splitter.split(X_test, y_test, groups_test))
 
-        X_val, y_val = X_test_temp[val_idx], y_test_temp[val_idx]
-        X_test, y_test = X_test_temp[test_idx], y_test_temp[test_idx]
+        X_val, Y_val = X_test[val_idx], y_test[val_idx]
+        X_test, Y_test = X_test[test_idx], y_test[test_idx]
 
-        return (X_train, y_train), (X_val, y_val), (X_test, y_test)    
+        return (X_train, y_train), (X_val, Y_val), (X_test, Y_test)
+
 def perform_pca(x_train, x_val, n_components=0.75):
 
     scaler = StandardScaler()
