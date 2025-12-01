@@ -505,157 +505,216 @@ def calculate_classification_metrics(y_true, y_pred, activity_names=None):
     
     return cm, df_metrics
 
+# Exercício 5
+
+def hyperparameter_tuning_and_eval(X_train, y_train, X_val, y_val, X_test, y_test, dataset_name):
+    """
+    Executa o exercício 5.1:
+    1. Testa vários k usando Treino e Validação.
+    2. Escolhe o melhor k.
+    3. Junta Treino+Validação, retreina e avalia no Teste.
+    """
+    
+    k_values = [3, 5, 7, 9, 11] # Valores a testar (CONFIRMAR SE SÃO APENAS ESTES)
+    best_k = -1
+    best_val_score = -1
+    
+    print(f"\n   >>> Tuning para: {dataset_name}")
+    
+    # --- FASE 1: Encontrar o melhor k (Train vs Val) ---
+    for k in k_values:
+        # Podes usar o 'our_KNN_Classifier' ou 'KNeighborsClassifier' do sklearn
+        # Usar sklearn é geralmente mais rápido para loops de tuning
+        knn = our_KNN_Classifier(k=k, distance_metric='euclidean')
+        knn.fit(X_train, y_train)
+        score = knn.score(X_val, y_val)
+        
+        # print(f"      k={k}: Val Acc = {score:.4f}") # (Opcional: print detalhado)
+        
+        if score > best_val_score:
+            best_val_score = score
+            best_k = k
+            
+    print(f"      Melhor k encontrado: {best_k} (Val Acc: {best_val_score:.4f})")
+    
+    # --- FASE 2: Retreino (Train + Val) e Avaliação Final (Test) ---
+    
+    # Concatenar Treino e Validação
+    X_combined = np.vstack((X_train, X_val))
+    y_combined = np.concatenate((y_train, y_val))
+    
+    # Treinar o modelo final com o melhor k
+    final_knn = our_KNN_Classifier(k=best_k, distance_metric='euclidean')
+    final_knn.fit(X_combined, y_combined)
+    
+    # Avaliar no Teste (O momento da verdade!)
+    # Aqui vamos prever e usar a tua função de métricas detalhadas
+    y_pred_test = final_knn.predict(X_test)
+    
+    # Retornar as previsões e o target real para usares no calculate_classification_metrics
+    return y_test, y_pred_test, best_k
+
 def main():
-
+    # --- 1. CARREGAR DADOS ---
+    print("--- 1. CARREGAR DADOS ---")
     features_dataset = None
+    # Tenta carregar o pickle das features manuais
     with open('features.pkl', 'rb') as f:
-        features_dataset = pickle.load(f)
+        data = pickle.load(f)
+        features_dataset = data['features'] if isinstance(data, dict) else data
 
-        if isinstance(features_dataset, dict):
-            features_dataset = features_dataset['features']
-            print("Dicionário carregado com sucesso.")
-
-    dataset = loadData(None)
-
-    embedding_dataset = None
-    embedding_file = 'embeddings_dataset.npy'
-
-    if os.path.exists(embedding_file):
-        embedding_dataset = np.load(embedding_file)
+    # Tenta carregar ou gerar os embeddings
+    dataset_raw = loadData(None)
+    if os.path.exists('embeddings_dataset.npy'):
+        embedding_dataset = np.load('embeddings_dataset.npy')
     else:
-        embedding_dataset = embedding_features(dataset)
+        embedding_dataset = embedding_features(dataset_raw)
+    dataset_raw = None # Limpar memória
 
+    # Lista para guardar o resumo final (para a tabela bonita no fim)
+    final_results = []
+
+    # --- 2. LOOP PRINCIPAL (ITERAR POR ESTRATÉGIA DE SPLIT) ---
+    split_strategies = ['random', 'subject']
     
-    activity_counts, dataset = analyze_data(dataset)
-    print(activity_counts)
-    
-    # Vamos aplicar o SMOTE para gerar e visualizar 3 novas samples
-    # da atividade 4, do participante 3
-    # Atenção, só devem ser utilizadas as samples do participante 3 para gerar as novas samples
-    atividade_alvo = 4
-    K = 3
-    # Filtrar o dataset para incluir apenas samples do participante 3
-    dataset_participante3 = {}
-    # Como as keys estão no formato "partXdevY", podemos filtrar por "part3"
+    for split_type in split_strategies:
+        print(f"\n{'#'*80}")
+        print(f"   ESTRATÉGIA DE SPLIT: {split_type.upper()}")
+        print(f"{'#'*80}")
+        
+        # 2.1 Realizar os Splits (Treino, Validação, Teste)
+        (f_X_train, f_y_train), (f_X_val, f_y_val), (f_X_test, f_y_test) = perform_splits(features_dataset, split_type)
+        (e_X_train, e_y_train), (e_X_val, e_y_val), (e_X_test, e_y_test) = perform_splits(embedding_dataset, split_type)
 
-    for key, values in dataset.items():
-        if "part3" in key:
-            dataset_participante3[key] = values
+        # 2.2 Pré-Processamento Base: STANDARD SCALER (Obrigatório para KNN/PCA/ReliefF)
+        scaler_f = StandardScaler()
+        f_Xt_sc = scaler_f.fit_transform(f_X_train)
+        f_Xv_sc = scaler_f.transform(f_X_val)
+        f_Xtest_sc = scaler_f.transform(f_X_test)
 
-    print("Aplicando SMOTE...")
+        scaler_e = StandardScaler()
+        e_Xt_sc = scaler_e.fit_transform(e_X_train)
+        e_Xv_sc = scaler_e.transform(e_X_val)
+        e_Xtest_sc = scaler_e.transform(e_X_test)
 
-    samples_sinteticas = smote_activity(dataset_participante3, atividade_alvo, K)
+        # 2.3 Preparar as Variantes de Dados (Experiments)
+        experiments = {}
 
-    print("Samples sintéticas geradas.")
-    visualize_smote(dataset_participante3, samples_sinteticas)
+        # ==========================================
+        # GRUPO A: MANUAL FEATURES
+        # ==========================================
+        # 1. Todas as Features (Normal)
+        experiments[f"[{split_type.upper()}] Manual: All"] = (f_Xt_sc, f_y_train, f_Xv_sc, f_y_val, f_Xtest_sc, f_y_test)
 
-    #2.
-    embedding_features(dataset)
-    
-    splits = {'random': {}, 'subject': {}}
+        # 2. PCA (90% Variância)
+        pca = PCA(n_components=0.90)
+        f_Xt_pca = pca.fit_transform(f_Xt_sc)
+        f_Xv_pca = pca.transform(f_Xv_sc)
+        f_Xtest_pca = pca.transform(f_Xtest_sc)
+        experiments[f"[{split_type.upper()}] Manual: PCA (90%)"] = (f_Xt_pca, f_y_train, f_Xv_pca, f_y_val, f_Xtest_pca, f_y_test)
 
-    # Random Splits
-    print(" > Random Splits...")
-    splits['random']['features'] = perform_splits(features_dataset, 'random')
-    splits['random']['embedding'] = perform_splits(embedding_dataset, 'random')
+        # 3. ReliefF (Top 15 Features)
+        print(f"   > Calculando ReliefF (Manual Features)...")
+        n_feats = 15
+        fs = ReliefF(n_neighbors=100, n_features_to_keep=n_feats)
+        
+        # Fit Transform no Treino
+        f_Xt_sel = fs.fit_transform(f_Xt_sc, f_y_train)
+        
+        # Aplicar a Validação e Teste (com fallback se .transform falhar)
+        try:
+            f_Xv_sel = fs.transform(f_Xv_sc)
+            f_Xtest_sel = fs.transform(f_Xtest_sc)
+        except AttributeError:
+            if hasattr(fs, 'top_features'):
+                cols = fs.top_features[:n_feats]
+                f_Xv_sel = f_Xv_sc[:, cols]
+                f_Xtest_sel = f_Xtest_sc[:, cols]
+            else:
+                f_Xv_sel = f_Xv_sc[:, :n_feats]
+                f_Xtest_sel = f_Xtest_sc[:, :n_feats]
 
-    # Subject Splits
-    print(" > Subject Splits...")
-    splits['subject']['features'] = perform_splits(features_dataset, 'subject')
-    splits['subject']['embedding'] = perform_splits(embedding_dataset, 'subject')
+        experiments[f"[{split_type.upper()}] Manual: ReliefF ({n_feats})"] = (f_Xt_sel, f_y_train, f_Xv_sel, f_y_val, f_Xtest_sel, f_y_test)
 
-    # --- 3. PRÉ-PROCESSAMENTO (Scaler + PCA + ReliefF) ---
-    print("\n--- 3. PROCESSAMENTO (SCALER / PCA / RELIEFF) ---")
-    
-    # Vamos criar um dicionário final de "Experiências" prontas a testar no KNN
-    experiments = {}
 
-    for split_name, datasets in splits.items():
-        for data_type, (data_train, data_val, data_test) in datasets.items():
+        # ==========================================
+        # GRUPO B: EMBEDDINGS
+        # ==========================================
+        # 1. Todos os Embeddings (Normal)
+        experiments[f"[{split_type.upper()}] Embed: All"] = (e_Xt_sc, e_y_train, e_Xv_sc, e_y_val, e_Xtest_sc, e_y_test)
+        
+        # 2. PCA Embeddings (90%)
+        pca_emb = PCA(n_components=0.90)
+        e_Xt_pca = pca_emb.fit_transform(e_Xt_sc)
+        e_Xv_pca = pca_emb.transform(e_Xv_sc)
+        e_Xtest_pca = pca_emb.transform(e_Xtest_sc)
+        experiments[f"[{split_type.upper()}] Embed: PCA (90%)"] = (e_Xt_pca, e_y_train, e_Xv_pca, e_y_val, e_Xtest_pca, e_y_test)
+
+        # 3. ReliefF Embeddings (Top 15)
+        print(f"   > Calculando ReliefF (Embeddings)...")
+        fs_emb = ReliefF(n_neighbors=100, n_features_to_keep=n_feats)
+        e_Xt_sel = fs_emb.fit_transform(e_Xt_sc, e_y_train)
+        
+        try:
+            e_Xv_sel = fs_emb.transform(e_Xv_sc)
+            e_Xtest_sel = fs_emb.transform(e_Xtest_sc)
+        except AttributeError:
+            if hasattr(fs_emb, 'top_features'):
+                cols = fs_emb.top_features[:n_feats]
+                e_Xv_sel = e_Xv_sc[:, cols]
+                e_Xtest_sel = e_Xtest_sc[:, cols]
+            else:
+                e_Xv_sel = e_Xv_sc[:, :n_feats]
+                e_Xtest_sel = e_Xtest_sc[:, :n_feats]
+
+        experiments[f"[{split_type.upper()}] Embed: ReliefF ({n_feats})"] = (e_Xt_sel, e_y_train, e_Xv_sel, e_y_val, e_Xtest_sel, e_y_test)
+
+
+        # --- 3. EXECUÇÃO DOS EXPERIMENTOS ---
+        for exp_name, data_pack in experiments.items():
+            X_tr, y_tr, X_v, y_v, X_te, y_te = data_pack
             
-            # Desempacotar (X, y)
-            X_train, y_train = data_train
-            X_val, y_val = data_val
-            # X_test, y_test = data_test (Não usamos teste agora, só validação)
-
-            # NOME BASE: ex: "Random - Features"
-            base_name = f"{split_name.capitalize()} - {data_type.capitalize()}"
-
-            # --- A. STANDARD (Só Scaler) ---
-            scaler = StandardScaler()
-            X_train_sc = scaler.fit_transform(X_train)
-            X_val_sc = scaler.transform(X_val)
+            # 3.1 Tuning (Encontrar k usando Train+Val e prever no Test)
+            y_true_final, y_pred_final, best_k = hyperparameter_tuning_and_eval(
+                X_tr, y_tr, X_v, y_v, X_te, y_te, exp_name
+            )
             
-            experiments[f"{base_name} (Normal)"] = (X_train_sc, y_train, X_val_sc, y_val)
+            # 3.2 Relatório Detalhado (Matriz de Confusão, Precision, Recall, etc.)
+            print(f"\n>>> RELATÓRIO DETALHADO: {exp_name} (k={best_k})")
+            
+            # Chamada direta sem mapa de atividades (usa IDs genéricos)
+            calculate_classification_metrics(y_true_final, y_pred_final)
+            
+            # 3.3 Guardar dados para o Resumo Final
+            from sklearn.metrics import accuracy_score, f1_score
+            acc = accuracy_score(y_true_final, y_pred_final)
+            f1 = f1_score(y_true_final, y_pred_final, average='macro')
+            
+            final_results.append({
+                'Experiência': exp_name,
+                'Melhor k': best_k,
+                'Accuracy': acc,
+                'Macro F1': f1,
+                'Num Features': X_tr.shape[1]
+            })
 
-            # --- B. PCA (90%) ---
-            # PCA não faz sentido em Embeddings (já são reduzidos), mas podemos testar
-            if data_type == 'features': 
-                pca = PCA(n_components=0.90)
-                X_train_pca = pca.fit_transform(X_train_sc)
-                X_val_pca = pca.transform(X_val_sc)
-                experiments[f"{base_name} (PCA 90%)"] = (X_train_pca, y_train, X_val_pca, y_val)
-
-            # --- C. FEATURE SELECTION (ReliefF) ---
-            if data_type == 'features':
-                print(f"   > A calcular ReliefF para {base_name} (pode demorar)...")
-                
-                # Instanciar ReliefF
-                # n_features_to_keep: quantas features queremos no final (ex: 30)
-                # n_neighbors: quantos vizinhos usa para calcular os pesos (ex: 100)
-                n_feats = 15
-                fs = ReliefF(n_neighbors=100, n_features_to_keep=n_feats)
-                
-                # Fit_transform no treino
-                X_train_sel = fs.fit_transform(X_train_sc, y_train)
-                
-                # Transform na validação
-                # O ReliefF original nem sempre tem .transform(). 
-                # Se der erro aqui, temos de selecionar as colunas manualmente.
-                try:
-                    X_val_sel = fs.transform(X_val_sc)
-                except AttributeError:
-                    # Se o método transform não existir, usamos os índices das melhores features
-                    # O ReliefF costuma guardar os índices em fs.top_features[:n_feats]
-                    if hasattr(fs, 'top_features'):
-                        top_indices = fs.top_features[:n_feats]
-                        X_val_sel = X_val_sc[:, top_indices]
-                    else:
-                        print("ERRO: Não consegui aplicar ReliefF na validação.")
-                        X_val_sel = X_val_sc[:, :n_feats] # Fallback (pega as primeiras)
-
-                experiments[f"{base_name} (ReliefF {n_feats})"] = (X_train_sel, y_train, X_val_sel, y_val)
+    # --- 4. RESUMO FINAL COMPARATIVO ---
+    print("\n\n" + "="*100)
+    print("RESUMO FINAL COMPARATIVO (Ordenado por Accuracy)")
+    print("="*100)
     
-    # --- 4. AVALIAÇÃO KNN (OUR vs SKLEARN) ---
-    print("\n" + "="*80)
-    print(f"{'EXPERIÊNCIA':<50} | {'FEATS':<5} | {'OUR KNN':<10} | {'SKLEARN':<10}")
-    print("="*80)
-
-    from sklearn.neighbors import KNeighborsClassifier # Importar o do sklearn
-    k = 5 
+    df_results = pd.DataFrame(final_results)
+    df_results = df_results.sort_values(by='Accuracy', ascending=False)
     
-    # Ordenar as chaves para leitura fácil
-    for exp_name in sorted(experiments.keys()):
-        X_tr, y_tr, X_v, y_v = experiments[exp_name]
-        
-        # 1. O Vosso KNN
-        knn_our = our_KNN_Classifier(k=k, distance_metric='euclidean')
-        knn_our.fit(X_tr, y_tr)
-        acc_our = knn_our.score(X_v, y_v)
-        
-        # 2. Sklearn KNN (Baseline)
-        knn_sk = KNeighborsClassifier(n_neighbors=k, metric='euclidean')
-        knn_sk.fit(X_tr, y_tr)
-        acc_sk = knn_sk.score(X_v, y_v)
-        
-        # Imprimir linha da tabela
-        print(f"{exp_name:<50} | {X_tr.shape[1]:<5} | {acc_our:.4f}     | {acc_sk:.4f}")
-
-        if "ReliefF" in exp_name: # Exemplo: detalhar apenas quando usamos ReliefF
-            print(f"\n>>> RELATÓRIO DETALHADO PARA: {exp_name}")
-            #prever todas as labels primeiro
-            y_pred_our = knn_our.predict(X_v) 
-            calculate_classification_metrics(y_v, y_pred_our)
+    pd.set_option('display.max_columns', None)
+    pd.set_option('display.width', 1000)
+    
+    print(df_results)
+    print("="*100)
+    
+    # Opcional: Guardar em CSV
+    df_results.to_csv("resultados_finais_knn.csv", index=False)
+    print("Tabela guardada em 'resultados_finais_knn.csv'")
 
 if __name__ == "__main__":
     main()
