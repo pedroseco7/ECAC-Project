@@ -322,7 +322,7 @@ def embedding_features(dataset):
 
     return EMBEDDINGS_DATASET
 
-def perform_splits(dataset, method):
+def perform_splits(dataset, method, current_seed):
     """
     Vamos dividir o dataset em Treino (60%), Validação (20%) e Teste (20%)
     """
@@ -335,22 +335,22 @@ def perform_splits(dataset, method):
         print("A aplicar Random Split (Stratified)...")
 
         X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=0.4, random_state=42, stratify=y
+            X, y, test_size=0.4, random_state=current_seed, stratify=y
         )
         X_val, X_test, y_val, y_test = train_test_split(
-            X_test, y_test, test_size=0.5, random_state=42, stratify=y_test
+            X_test, y_test, test_size=0.5, random_state=current_seed, stratify=y_test
         )
         return (X_train, y_train), (X_val, y_val), (X_test, y_test)
     
     elif method == 'subject':
         print("A aplicar Subject Split...")
-        splitter = GroupShuffleSplit(n_splits=1, test_size=0.6, random_state=5)
+        splitter = GroupShuffleSplit(n_splits=1, test_size=0.6, random_state=current_seed)
         train_indices, test_indices = next(splitter.split(X, y, groups))
         
         X_train, y_train = X[train_indices], y[train_indices]
         X_test, y_test, groups_test = X[test_indices], y[test_indices], groups[test_indices]
 
-        splitter = GroupShuffleSplit(n_splits=1, test_size=0.5, random_state=5)
+        splitter = GroupShuffleSplit(n_splits=1, test_size=0.5, random_state=current_seed)
         val_idx, test_idx = next(splitter.split(X_test, y_test, groups_test))
 
         X_val, Y_val = X_test[val_idx], y_test[val_idx]
@@ -552,217 +552,317 @@ def hyperparameter_tuning_and_eval(X_train, y_train, X_val, y_val, X_test, y_tes
     y_pred_test = final_knn.predict(X_test)
     
     # Retornar as previsões e o target real para usares no calculate_classification_metrics
-    return y_test, y_pred_test, best_k
+    return y_test, y_pred_test, best_k, final_knn
 
 def perform_hypothesis_testing(results_dict):
     """
     Compara o melhor modelo contra todos os outros usando Wilcoxon Signed-Rank Test.
-    results_dict: { 'ModelName': [acc_run1, acc_run2, ..., acc_runN] }
-
-    Escolhi este teste estatistico porque assume que os dados nao seguem uma distribuicao normal, ao contrario do t-test. Usa dados emparelhados (mesmas runs para cada modelo) e testa se as medianas das diferencas sao significativamente diferentes de zero.
     """
+    print(f"\n{'#'*80}")
     print("   ANÁLISE ESTATÍSTICA (WILCOXON SIGNED-RANK TEST)")
+    print(f"{'#'*80}")
 
-    # 1. Calcular médias para encontrar o "Melhor Modelo"
+    # 1. Calcular médias
     means = {k: np.mean(v) for k, v in results_dict.items()}
-    best_model_name = max(means, key=means.get)
+    
+    # Ordenar por melhor performance
+    sorted_models = sorted(means.items(), key=lambda x: x[1], reverse=True)
+    best_model_name = sorted_models[0][0]
     best_model_scores = results_dict[best_model_name]
     
     print(f"MELHOR MODELO (Média): {best_model_name} (Acc: {means[best_model_name]:.4f})")
-    print(f"{'Comparison Model':<40} | {'p-value':<12} | {'Significant?':<10}")
+    print("-" * 100)
+    print(f"{'Comparison Model':<40} | {'Mean Acc':<10} | {'p-value':<12} | {'Significant?':<10}")
+    print("-" * 100)
 
     stats_results = []
-
-    # 2. Comparar o melhor contra os restantes
     alpha = 0.05
-    for model_name, scores in results_dict.items():
+
+    for model_name, acc_mean in sorted_models:
         if model_name == best_model_name:
             continue
         
-        # Teste de Wilcoxon (alternative='greater' testa se o Best é > Other)
-        # Nota: Se as accuracies forem idênticas em todas as runs, o teste falha (zero diff).
+        scores = results_dict[model_name]
+        
         try:
             stat, p_value = wilcoxon(best_model_scores, scores, alternative='greater')
-            
             is_significant = p_value < alpha
-            sig_str = "YES" if is_significant else "NO"
+            sig_str = "YES" if is_significant else "NO "
             
-            print(f"{model_name:<40} | {p_value:.6f}     | {sig_str}")
+            print(f"{model_name:<40} | {acc_mean:.4f}     | {p_value:.6f}     | {sig_str}")
             
             stats_results.append({
                 'Model': model_name,
+                'Mean Accuracy': acc_mean,
                 'p-value': p_value,
                 'Significant Difference': is_significant
             })
             
         except ValueError:
-            # Acontece se todos os valores forem exatamente iguais
-            print(f"{model_name:<40} | N/A (Equal)  | NO")
+            print(f"{model_name:<40} | {acc_mean:.4f}     | N/A (Equal)  | NO")
 
     return best_model_name, pd.DataFrame(stats_results)
 
 def main():
+
     # --- 1. CARREGAR DADOS ---
     print("--- 1. CARREGAR DADOS ---")
     features_dataset = None
-    # Tenta carregar o pickle das features manuais
     with open('features.pkl', 'rb') as f:
         data = pickle.load(f)
         features_dataset = data['features'] if isinstance(data, dict) else data
+        feature_names = data['names']
 
-    # Tenta carregar ou gerar os embeddings
-    dataset_raw = loadData(None)
+    dataset = loadData(None)
     if os.path.exists('embeddings_dataset.npy'):
         embedding_dataset = np.load('embeddings_dataset.npy')
     else:
-        embedding_dataset = embedding_features(dataset_raw)
-    dataset_raw = None # Limpar memória
+        embedding_dataset = embedding_features(dataset)
 
-    # Lista para guardar o resumo final (para a tabela bonita no fim)
-    final_results = []
 
-    # --- 2. LOOP PRINCIPAL (ITERAR POR ESTRATÉGIA DE SPLIT) ---
-    split_strategies = ['random', 'subject']
-    
-    for split_type in split_strategies:
-        print(f"\n{'#'*80}")
-        print(f"   ESTRATÉGIA DE SPLIT: {split_type.upper()}")
-        print(f"{'#'*80}")
+
+    print(f"Shape original Features: {features_dataset.shape}")
+    print(f"Shape original Embeddings: {embedding_dataset.shape}")
+
+    # 1. Filtrar Features Manuais
+    # Assumindo: [Features... | Label | SubjectID] -> Label é a coluna -2
+    mask_f = features_dataset[:, -2] <= 7
+    features_dataset = features_dataset[mask_f]
+
+    # 2. Filtrar Embeddings (MUITO IMPORTANTE)
+    # Tens de fazer o mesmo aqui, senão vais comparar 7 classes contra 11 classes!
+    mask_e = embedding_dataset[:, -2] <= 7
+    embedding_dataset = embedding_dataset[mask_e]
+
+    print(f"\n[INFO] Dados filtrados (Apenas Classes 1-7)")
+    print(f" -> Features novas: {features_dataset.shape}")
+    print(f" -> Embeddings novos: {embedding_dataset.shape}")
+
+    unique_classes_manual = np.unique(features_dataset[:, -2])
+    unique_classes_embed = np.unique(embedding_dataset[:, -2])
+
+    print(f"\n[DEBUG] Classes presentes no Manual Features: {unique_classes_manual}")
+    print(f"[DEBUG] Classes presentes no Embeddings:      {unique_classes_embed}")
+    # --- ESTRUTURA PARA GUARDAR RESULTADOS DAS 5 RUNS ---
+    results_storage = {} 
+    NUM_RUNS = 5
+    N_FEATS_RELIEF = 15
+
+    global_best_info = {
+        'accuracy': 0.0,
+        'seed': None,
+        'model_name': None,
+        'best_k': None,
+        'split_type': None
+    }
+
+    best_deploy_package = None
+    global_best_acc = 0.0
+
+    # --- 2. LOOP DE REPETIÇÃO (ROBUSTEZ ESTATÍSTICA) ---
+    for run_idx in range(NUM_RUNS):
+        current_seed = np.random.randint(0, 10000)
+        print(f"\n{'='*80}")
+        print(f"   >>> RUN {run_idx + 1}/{NUM_RUNS} (Seed: {current_seed}) <<<")
+        print(f"{'='*80}")
+
+        split_strategies = ['random', 'subject']
         
-        # 2.1 Realizar os Splits (Treino, Validação, Teste)
-        (f_X_train, f_y_train), (f_X_val, f_y_val), (f_X_test, f_y_test) = perform_splits(features_dataset, split_type)
-        (e_X_train, e_y_train), (e_X_val, e_y_val), (e_X_test, e_y_test) = perform_splits(embedding_dataset, split_type)
+        for split_type in split_strategies:
+            print(f"\n   --- ESTRATÉGIA: {split_type.upper()} ---")
+            
+            # 2.1 Splits
+            (f_X_train, f_y_train), (f_X_val, f_y_val), (f_X_test, f_y_test) = perform_splits(features_dataset, split_type, current_seed)
+            (e_X_train, e_y_train), (e_X_val, e_y_val), (e_X_test, e_y_test) = perform_splits(embedding_dataset, split_type, current_seed)
 
-        # 2.2 Pré-Processamento Base: STANDARD SCALER (Obrigatório para KNN/PCA/ReliefF)
-        scaler_f = StandardScaler()
-        f_Xt_sc = scaler_f.fit_transform(f_X_train)
-        f_Xv_sc = scaler_f.transform(f_X_val)
-        f_Xtest_sc = scaler_f.transform(f_X_test)
+            # 2.2 Scaler
+            scaler_f = StandardScaler()
+            f_Xt_sc = scaler_f.fit_transform(f_X_train)
+            f_Xv_sc = scaler_f.transform(f_X_val)
+            f_Xtest_sc = scaler_f.transform(f_X_test)
 
-        scaler_e = StandardScaler()
-        e_Xt_sc = scaler_e.fit_transform(e_X_train)
-        e_Xv_sc = scaler_e.transform(e_X_val)
-        e_Xtest_sc = scaler_e.transform(e_X_test)
+            scaler_e = StandardScaler()
+            e_Xt_sc = scaler_e.fit_transform(e_X_train)
+            e_Xv_sc = scaler_e.transform(e_X_val)
+            e_Xtest_sc = scaler_e.transform(e_X_test)
 
-        # 2.3 Preparar as Variantes de Dados (Experiments)
-        experiments = {}
+            # 2.3 Preparar Experiências
+            experiments = {}
+            # --- GRUPO A: MANUAL FEATURES ---
+            experiments[f"[{split_type}] Manual: All"] = {
+                'data': (f_Xt_sc, f_y_train, f_Xv_sc, f_y_val, f_Xtest_sc, f_y_test),
+                'scaler': scaler_f,
+                'reducer': None, # Não há redução
+                'type': 'manual'
+            }
 
-        # ==========================================
-        # GRUPO A: MANUAL FEATURES
-        # ==========================================
-        # 1. Todas as Features (Normal)
-        experiments[f"[{split_type.upper()}] Manual: All"] = (f_Xt_sc, f_y_train, f_Xv_sc, f_y_val, f_Xtest_sc, f_y_test)
-
-        # 2. PCA (90% Variância)
-        pca = PCA(n_components=0.90)
-        f_Xt_pca = pca.fit_transform(f_Xt_sc)
-        f_Xv_pca = pca.transform(f_Xv_sc)
-        f_Xtest_pca = pca.transform(f_Xtest_sc)
-        experiments[f"[{split_type.upper()}] Manual: PCA (90%)"] = (f_Xt_pca, f_y_train, f_Xv_pca, f_y_val, f_Xtest_pca, f_y_test)
-
-        # 3. ReliefF (Top 15 Features)
-        print(f"   > Calculando ReliefF (Manual Features)...")
-        n_feats = 15
-        fs = ReliefF(n_neighbors=100, n_features_to_keep=n_feats)
+            # 2. Manual PCA
+            pca = PCA(n_components=0.90)
         
-        # Fit Transform no Treino
-        f_Xt_sel = fs.fit_transform(f_Xt_sc, f_y_train)
-        
-        # Aplicar a Validação e Teste (com fallback se .transform falhar)
-        try:
-            f_Xv_sel = fs.transform(f_Xv_sc)
-            f_Xtest_sel = fs.transform(f_Xtest_sc)
-        except AttributeError:
-            if hasattr(fs, 'top_features'):
-                cols = fs.top_features[:n_feats]
-                f_Xv_sel = f_Xv_sc[:, cols]
-                f_Xtest_sel = f_Xtest_sc[:, cols]
-            else:
-                f_Xv_sel = f_Xv_sc[:, :n_feats]
-                f_Xtest_sel = f_Xtest_sc[:, :n_feats]
+            f_Xt_pca = pca.fit_transform(f_Xt_sc)
+            f_Xv_pca = pca.transform(f_Xv_sc)
+            f_Xtest_pca = pca.transform(f_Xtest_sc)
+            experiments[f"[{split_type}] Manual: PCA (90%)"] = {
+                'data': (f_Xt_pca, f_y_train, f_Xv_pca, f_y_val, f_Xtest_pca, f_y_test),
+                'scaler': scaler_f,
+                'reducer': pca, # Guardamos o objeto PCA treinado
+                'type': 'manual'
+            }
 
-        experiments[f"[{split_type.upper()}] Manual: ReliefF ({n_feats})"] = (f_Xt_sel, f_y_train, f_Xv_sel, f_y_val, f_Xtest_sel, f_y_test)
+            # 3. Manual ReliefF
+            fs = ReliefF(n_neighbors=100, n_features_to_keep=N_FEATS_RELIEF)
+            f_Xt_sel = fs.fit_transform(f_Xt_sc, f_y_train)
+            cols = fs.top_features[:N_FEATS_RELIEF]
+            f_Xv_sel = f_Xv_sc[:, cols]
+            f_Xtest_sel = f_Xtest_sc[:, cols]
 
+            experiments[f"[{split_type}] Manual: ReliefF ({N_FEATS_RELIEF})"] = {
+                'data': (f_Xt_sel, f_y_train, f_Xv_sel, f_y_val, f_Xtest_sel, f_y_test),
+                'scaler': scaler_f,
+                'reducer': fs,
+                'type': 'manual'
+            }
 
-        # ==========================================
-        # GRUPO B: EMBEDDINGS
-        # ==========================================
-        # 1. Todos os Embeddings (Normal)
-        experiments[f"[{split_type.upper()}] Embed: All"] = (e_Xt_sc, e_y_train, e_Xv_sc, e_y_val, e_Xtest_sc, e_y_test)
-        
-        # 2. PCA Embeddings (90%)
-        pca_emb = PCA(n_components=0.90)
-        e_Xt_pca = pca_emb.fit_transform(e_Xt_sc)
-        e_Xv_pca = pca_emb.transform(e_Xv_sc)
-        e_Xtest_pca = pca_emb.transform(e_Xtest_sc)
-        experiments[f"[{split_type.upper()}] Embed: PCA (90%)"] = (e_Xt_pca, e_y_train, e_Xv_pca, e_y_val, e_Xtest_pca, e_y_test)
-
-        # 3. ReliefF Embeddings (Top 15)
-        print(f"   > Calculando ReliefF (Embeddings)...")
-        fs_emb = ReliefF(n_neighbors=100, n_features_to_keep=n_feats)
-        e_Xt_sel = fs_emb.fit_transform(e_Xt_sc, e_y_train)
-        
-        try:
-            e_Xv_sel = fs_emb.transform(e_Xv_sc)
-            e_Xtest_sel = fs_emb.transform(e_Xtest_sc)
-        except AttributeError:
-            if hasattr(fs_emb, 'top_features'):
-                cols = fs_emb.top_features[:n_feats]
-                e_Xv_sel = e_Xv_sc[:, cols]
-                e_Xtest_sel = e_Xtest_sc[:, cols]
-            else:
-                e_Xv_sel = e_Xv_sc[:, :n_feats]
-                e_Xtest_sel = e_Xtest_sc[:, :n_feats]
-
-        experiments[f"[{split_type.upper()}] Embed: ReliefF ({n_feats})"] = (e_Xt_sel, e_y_train, e_Xv_sel, e_y_val, e_Xtest_sel, e_y_test)
-
-
-        # --- 3. EXECUÇÃO DOS EXPERIMENTOS ---
-        for exp_name, data_pack in experiments.items():
-            X_tr, y_tr, X_v, y_v, X_te, y_te = data_pack
+            # --- GRUPO B: EMBEDDINGS ---
+            # 1. All
+            experiments[f"[{split_type}] Embed: All"] = {
+                'data': (e_Xt_sc, e_y_train, e_Xv_sc, e_y_val, e_Xtest_sc, e_y_test),
+                'scaler': scaler_e,
+                'reducer': None,
+                'type': 'embedding'
+            }
             
-            # 3.1 Tuning (Encontrar k usando Train+Val e prever no Test)
-            y_true_final, y_pred_final, best_k = hyperparameter_tuning_and_eval(
-                X_tr, y_tr, X_v, y_v, X_te, y_te, exp_name
-            )
-            
-            # 3.2 Relatório Detalhado (Matriz de Confusão, Precision, Recall, etc.)
-            print(f"\n>>> RELATÓRIO DETALHADO: {exp_name} (k={best_k})")
-            
-            # Chamada direta sem mapa de atividades (usa IDs genéricos)
-            calculate_classification_metrics(y_true_final, y_pred_final)
-            
-            # 3.3 Guardar dados para o Resumo Final
-            from sklearn.metrics import accuracy_score, f1_score
-            acc = accuracy_score(y_true_final, y_pred_final)
-            f1 = f1_score(y_true_final, y_pred_final, average='macro')
-            
-            final_results.append({
-                'Experiência': exp_name,
-                'Melhor k': best_k,
-                'Accuracy': acc,
-                'Macro F1': f1,
-                'Num Features': X_tr.shape[1]
-            })
+            # 2. PCA (90%)
+            pca_emb = PCA(n_components=0.90)
+            e_Xt_pca = pca_emb.fit_transform(e_Xt_sc)
+            e_Xv_pca = pca_emb.transform(e_Xv_sc)
+            e_Xtest_pca = pca_emb.transform(e_Xtest_sc)
+            experiments[f"[{split_type}] Embed: PCA (90%)"] = {
+                'data': (e_Xt_pca, e_y_train, e_Xv_pca, e_y_val, e_Xtest_pca, e_y_test),
+                'scaler': scaler_e,
+                'reducer': pca_emb, # Guardamos o objeto PCA treinado
+                'type': 'embedding'
+            }
 
-    # --- 4. RESUMO FINAL COMPARATIVO ---
+            # 3. ReliefF (Top 15)
+            fs_emb = ReliefF(n_neighbors=100, n_features_to_keep=N_FEATS_RELIEF)
+            e_Xt_sel = fs_emb.fit_transform(e_Xt_sc, e_y_train)
+
+            cols_emb = fs_emb.top_features[:N_FEATS_RELIEF]
+            
+            e_Xv_sel = e_Xv_sc[:, cols_emb]
+            e_Xtest_sel = e_Xtest_sc[:, cols_emb]
+            
+            experiments[f"[{split_type}] Embed: ReliefF ({N_FEATS_RELIEF})"] = {
+                'data': (e_Xt_sel, e_y_train, e_Xv_sel, e_y_val, e_Xtest_sel, e_y_test),
+                'scaler': scaler_e,
+                'reducer': fs_emb,
+                'type': 'embedding'
+            }
+
+            # --- 3. EXECUTAR TUNING E AVALIAÇÃO ---
+            for exp_name, exp_info in experiments.items():
+                X_tr, y_tr, X_v, y_v, X_te, y_te = exp_info['data']
+                
+                # Tuning e Retreino
+                y_true_final, y_pred_final, best_k, trained_model = hyperparameter_tuning_and_eval(
+                    X_tr, y_tr, X_v, y_v, X_te, y_te, exp_name
+                )
+                
+                # APENAS NA PRIMEIRA RUN: Imprimir Relatório Detalhado
+                if run_idx == 0:
+                    print(f"\n>>> [DETALHES RUN 1] {exp_name} (Melhor k={best_k})")
+                    
+                    # Sem mapa de atividades: Ele usa os IDs numéricos (Class 1, Class 2...)
+                    calculate_classification_metrics(y_true_final, y_pred_final, activity_names=None)
+                
+                # Calcular Accuracy Simples para estatística
+                from sklearn.metrics import accuracy_score
+                acc = accuracy_score(y_true_final, y_pred_final)
+                
+                # Guardar no dicionário de resultados
+                if exp_name not in results_storage:
+                    results_storage[exp_name] = []
+                results_storage[exp_name].append(acc)
+                
+                # Print curto para acompanhar progresso
+                print(f"      -> {exp_name}: Acc={acc:.4f} (k={best_k})")
+
+                # --- NOVO: VERIFICAR SE É O MELHOR RESULTADO GLOBAL ---
+                if acc > global_best_acc:
+
+                    if exp_info['type'] == 'manual':
+                        # Se carregaste de um dict no início, os nomes devem estar acessíveis
+                        # Assumindo que tens uma variável 'feature_names' global ou carregada
+                        current_feat_names = feature_names # <--- TENS DE TER ISTO DISPONÍVEL
+                    else:
+                        # Para embeddings os nomes não importam tanto (é posicional), mas criamos para consistência
+                        current_feat_names = [f"emb_{i}" for i in range(X_tr.shape[1])]
+
+                    global_best_acc = acc
+                    
+                    # Empacotar tudo o que é preciso para o futuro
+                    best_deploy_package = {
+                        'model_name': exp_name,
+                        'accuracy': acc,
+                        'scaler': exp_info['scaler'],   # O scaler treinado nesta run
+                        'reducer': exp_info['reducer'], # O PCA/ReliefF treinado nesta run
+                        'knn_model': trained_model,     # O KNN treinado nesta run
+                        'data_type': exp_info['type'],  # 'manual' ou 'embedding'
+                        'best_k': best_k
+                    }
+                    print(f"      [NOVO RECORDE] {exp_name} -> {acc:.4f}")
+
+    # --- 4. RESUMO FINAL E ESTATÍSTICA ---
     print("\n\n" + "="*100)
-    print("RESUMO FINAL COMPARATIVO (Ordenado por Accuracy)")
+    print(f"RESUMO FINAL APÓS {NUM_RUNS} RUNS (Ordenado por Média)")
     print("="*100)
     
-    df_results = pd.DataFrame(final_results)
-    df_results = df_results.sort_values(by='Accuracy', ascending=False)
+    summary_data = []
+    for model_name, acc_list in results_storage.items():
+        summary_data.append({
+            'Modelo': model_name,
+            'Mean Accuracy': np.mean(acc_list),
+            'Std Dev': np.std(acc_list),
+            'Max Acc': np.max(acc_list),
+            'Min Acc': np.min(acc_list)
+        })
     
+    df_summary = pd.DataFrame(summary_data)
+    df_summary = df_summary.sort_values(by='Mean Accuracy', ascending=False)
+    
+    # Configuração para mostrar tudo
     pd.set_option('display.max_columns', None)
     pd.set_option('display.width', 1000)
+    pd.set_option('display.max_colwidth', None)
     
-    print(df_results)
+    print(df_summary)
     print("="*100)
     
-    # Opcional: Guardar em CSV
-    df_results.to_csv("resultados_finais_knn.csv", index=False)
-    print("Tabela guardada em 'resultados_finais_knn.csv'")
+    # Guardar Tabela de Médias
+    df_summary.to_csv("resultados_finais_medias.csv", index=False)
+    print("Tabela de médias guardada em 'resultados_finais_medias.csv'")
+
+    # --- 5. TESTE DE HIPÓTESES (WILCOXON) ---
+    best_model, df_stats = perform_hypothesis_testing(results_storage)
+
+    df_stats.to_csv("resultados_estatisticos.csv", index=False)
+    print("\nResultados estatísticos guardados em 'resultados_estatisticos.csv'")
+
+
+    # --- Dar display dos MELHORES PARÂMETROS GLOBAIS ---
+
+    print("\n\n" + "X"*100)
+    print("    A GUARDAR O MELHOR MODELO (DEPLOYMENT) ")
+    print("X"*100)
+    print(f"Melhor Modelo: {best_deploy_package['model_name']}")
+    print(f"Accuracy:      {best_deploy_package['accuracy']:.4f}")
+
+    with open('best_model_pipeline.pkl', 'wb') as f:
+        pickle.dump(best_deploy_package, f)
     
+    print("Pipeline guardada em 'best_model_pipeline.pkl'.")    
+
 
 if __name__ == "__main__":
     main()
