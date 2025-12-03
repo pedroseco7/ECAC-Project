@@ -72,7 +72,7 @@ def analyze_data(data):
             else:
                 activity_counts[activity] = 1
 
-    return activity_counts, data
+    return activity_counts
     
 
 def smote_activity(dataset, activity_label, K):
@@ -529,8 +529,6 @@ def hyperparameter_tuning_and_eval(X_train, y_train, X_val, y_val, X_test, y_tes
         knn.fit(X_train, y_train)
         score = knn.score(X_val, y_val)
         
-        # print(f"      k={k}: Val Acc = {score:.4f}") # (Opcional: print detalhado)
-        
         if score > best_val_score:
             best_val_score = score
             best_k = k
@@ -605,21 +603,60 @@ def perform_hypothesis_testing(results_dict):
 
 def main():
 
+    activities_map = {
+        1: 'STAND', 
+        2: 'SIT', 
+        3: 'SIT AND TALK', 
+        4: 'WALK', 
+        5: 'WALK AND TALK', 
+        6: 'CLIMB STAIR (UP/DOWN)', 
+        7: 'CLIMB STAIR (UP/DOWN) AND TALK'
+    }
+
     # --- 1. CARREGAR DADOS ---
     print("--- 1. CARREGAR DADOS ---")
     features_dataset = None
     with open('features.pkl', 'rb') as f:
         data = pickle.load(f)
-        features_dataset = data['features'] if isinstance(data, dict) else data
-        feature_names = data['names']
+
+        if isinstance(data, dict):
+            features_dataset = data['features']
+            feature_names = data['names']
+            print("Features e Nomes carregados com sucesso.")
+        else:
+            features_dataset = data
+            # Não existe nomes, temos de gerar valores aleatórios
+            # Gera nomes feat_0, feat_1... se não existirem
+            feature_names = [f"feat_{i}" for i in range(features_dataset.shape[1])]
 
     dataset = loadData(None)
+    activity_counts = analyze_data(dataset) 
+    print(activity_counts)
+    # Vamos aplicar o SMOTE para gerar e visualizar 3 novas samples
+    # da atividade 4, do participante 3
+    # Atenção, só devem ser utilizadas as samples do participante 3 para gerar as novas samples
+    atividade_alvo = 4
+    K = 3
+
+    # Filtrar o dataset para incluir apenas samples do participante 3
+    dataset_participante3 = {}
+
+    # Como as keys estão no formato "partXdevY", podemos filtrar por "part3"
+    for key, values in dataset.items():
+        if "part3" in key:
+            dataset_participante3[key] = values
+
+    print("Aplicando SMOTE...")
+    samples_sinteticas = smote_activity(dataset_participante3, atividade_alvo, K)
+
+    print("Samples sintéticas geradas.")
+
+    visualize_smote(dataset_participante3, samples_sinteticas)
+
     if os.path.exists('embeddings_dataset.npy'):
         embedding_dataset = np.load('embeddings_dataset.npy')
     else:
         embedding_dataset = embedding_features(dataset)
-
-
 
     print(f"Shape original Features: {features_dataset.shape}")
     print(f"Shape original Embeddings: {embedding_dataset.shape}")
@@ -638,11 +675,12 @@ def main():
     print(f" -> Features novas: {features_dataset.shape}")
     print(f" -> Embeddings novos: {embedding_dataset.shape}")
 
-    unique_classes_manual = np.unique(features_dataset[:, -2])
-    unique_classes_embed = np.unique(embedding_dataset[:, -2])
+    unique, counts = np.unique(features_dataset[:, -2], return_counts=True)
+    print("\n[ANÁLISE DE CLASSES]")
+    for cls, count in zip(unique, counts):
+        print(f"   Actividade {int(cls)}: {count} amostras ({count/sum(counts)*100:.1f}%)")
 
-    print(f"\n[DEBUG] Classes presentes no Manual Features: {unique_classes_manual}")
-    print(f"[DEBUG] Classes presentes no Embeddings:      {unique_classes_embed}")
+
     # --- ESTRUTURA PARA GUARDAR RESULTADOS DAS 5 RUNS ---
     results_storage = {} 
     NUM_RUNS = 5
@@ -674,6 +712,16 @@ def main():
             # 2.1 Splits
             (f_X_train, f_y_train), (f_X_val, f_y_val), (f_X_test, f_y_test) = perform_splits(features_dataset, split_type, current_seed)
             (e_X_train, e_y_train), (e_X_val, e_y_val), (e_X_test, e_y_test) = perform_splits(embedding_dataset, split_type, current_seed)
+
+            print("Aplicando o SMOTE para equilibrar as classes de treino.")
+            # Vamos aplicar o SMOTE às classes minoritárias
+            from imblearn.over_sampling import SMOTE
+            
+            # k_neighbors=3 é seguro para a classe 7 que é pequena
+            smote = SMOTE(random_state=current_seed, k_neighbors=3)
+            
+            # O SMOTE cria novas amostras sintéticas apenas para as classes minoritárias
+            f_X_train, f_y_train = smote.fit_resample(f_X_train, f_y_train)
 
             # 2.2 Scaler
             scaler_f = StandardScaler()
@@ -772,7 +820,10 @@ def main():
                 # APENAS NA PRIMEIRA RUN: Imprimir Relatório Detalhado
                 if run_idx == 0:
                     print(f"\n>>> [DETALHES RUN 1] {exp_name} (Melhor k={best_k})")
+                    unique_labels = np.unique(np.concatenate([y_true_final, y_pred_final]))
+                    class_names_list = [activities_map.get(int(c), f"Class {int(c)}") for c in unique_labels]
                     
+                    calculate_classification_metrics(y_true_final, y_pred_final, activity_names=class_names_list)
                     # Sem mapa de atividades: Ele usa os IDs numéricos (Class 1, Class 2...)
                     calculate_classification_metrics(y_true_final, y_pred_final, activity_names=None)
                 
@@ -809,7 +860,8 @@ def main():
                         'reducer': exp_info['reducer'], # O PCA/ReliefF treinado nesta run
                         'knn_model': trained_model,     # O KNN treinado nesta run
                         'data_type': exp_info['type'],  # 'manual' ou 'embedding'
-                        'best_k': best_k
+                        'best_k': best_k,
+                        'feature_names': current_feat_names
                     }
                     print(f"      [NOVO RECORDE] {exp_name} -> {acc:.4f}")
 
