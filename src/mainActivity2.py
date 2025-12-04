@@ -652,7 +652,7 @@ def main():
     print("Samples sintéticas geradas.")
 
     visualize_smote(dataset_participante3, samples_sinteticas)
-
+    #============================================================
     if os.path.exists('embeddings_dataset.npy'):
         embedding_dataset = np.load('embeddings_dataset.npy')
     else:
