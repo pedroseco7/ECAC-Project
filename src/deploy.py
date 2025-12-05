@@ -25,6 +25,12 @@ import pandas as pd
 
 from scipy.stats import wilcoxon
 
+import warnings
+from sklearn.exceptions import InconsistentVersionWarning
+
+# Ignorar especificamente o aviso de versões incompatíveis
+warnings.filterwarnings("ignore", category=InconsistentVersionWarning)
+
 class our_KNN_Classifier:
     def __init__(self,k,distance_metric='euclidean'):
         self.k = k
@@ -116,44 +122,32 @@ def f_spectral_entropy(data):
 def extract_manual_features_single(segment, fs=50):
     """
     Extrai features de um único segmento (256, 9).
-    GARANTIA DE ORDEM: Segue a mesma sequência do extract_features original.
+    É importante que respeite a ordem de dois loops do treino.
     """
     feature_vector = []
     
-    # 1. Mapeamento das colunas (Igual ao treino)
-    # 0,1,2=Acc | 3,4,5=Gyro | 6,7,8=Mag
-    axis_indices = {
-        'acc_x': 0, 'acc_y': 1, 'acc_z': 2,
-        'gyro_x': 3, 'gyro_y': 4, 'gyro_z': 5,
-        'mag_x': 6, 'mag_y': 7, 'mag_z': 8,
-    }
-    sensors = ['acc', 'gyro', 'mag']
+    # 9 colunas: Acc(0-2), Gyro(3-5), Mag(6-8)
+    # Índices: 0..8
+    
+    # --- LOOP 1: Features Temporais (Média ... Spectral Entropy) ---
+    # No treino, este loop corre para todos os eixos primeiro.
+    for col_idx in range(9):
+        d = segment[:, col_idx]
+        feature_vector.extend([
+            np.mean(d), np.median(d), np.std(d), np.var(d), 
+            np.sqrt(np.mean(d**2)), np.mean(np.diff(d)), 
+            skew(d), kurtosis(d), iqr(d),
+            np.sum(np.diff(np.signbit(d)) != 0),
+            np.sum(np.diff(np.signbit(d - np.mean(d))) != 0),
+            f_spectral_entropy(d)
+        ])
 
-    window_data = {} 
-
-    for ax_name, col_idx in axis_indices.items():
-        data_axis = segment[:, col_idx]
-        window_data[ax_name] = data_axis
-        
-        feature_vector.append(np.mean(data_axis))                   
-        feature_vector.append(np.median(data_axis))                 
-        feature_vector.append(np.std(data_axis))                    
-        feature_vector.append(np.var(data_axis))                    
-        feature_vector.append(np.sqrt(np.mean(data_axis**2)))       
-        feature_vector.append(np.mean(np.diff(data_axis)))          
-        feature_vector.append(skew(data_axis))                      
-        feature_vector.append(kurtosis(data_axis))                  
-        feature_vector.append(iqr(data_axis))                       
-        
-        
-        feature_vector.append(np.sum(np.diff(np.signbit(data_axis)) != 0)) 
-        
-        feature_vector.append(np.sum(np.diff(np.signbit(data_axis - np.mean(data_axis))) != 0)) 
-        
-        feature_vector.append(f_spectral_entropy(data_axis))
-        
-        fft_vals = np.abs(fft(data_axis))[:len(data_axis)//2]
-        fft_freqs = np.fft.fftfreq(len(data_axis), d=1/fs)[:len(data_axis)//2]
+    # --- LOOP 2: Features Espectrais (Dom Freq, Energy) ---
+    # No treino, este loop corre para todos os eixos DEPOIS do primeiro loop acabar.
+    for col_idx in range(9):
+        d = segment[:, col_idx]
+        fft_vals = np.abs(fft(d))[:len(d)//2]
+        fft_freqs = np.fft.fftfreq(len(d), d=1/fs)[:len(d)//2]
         
         if len(fft_vals) > 1:
             dom_idx = np.argmax(fft_vals[1:]) + 1
@@ -162,16 +156,15 @@ def extract_manual_features_single(segment, fs=50):
             dom_freq = 0.0
             
         feature_vector.append(dom_freq)
-        feature_vector.append(np.sum(fft_vals**2) / len(data_axis)) 
+        feature_vector.append(np.sum(fft_vals**2) / len(d)) # Energy
 
-
-    energies_acc = []
-    energies_gyro = []
-
-    for sensor in sensors:
-        x = window_data[f'{sensor}_x']
-        y = window_data[f'{sensor}_y']
-        z = window_data[f'{sensor}_z']
+    # --- LOOP 3: Features Combinadas (Corr, SMA, EVA) ---
+    energies = {'acc': [], 'gyro': []}
+    sensors = ['acc', 'gyro', 'mag']
+    
+    for i, sensor in enumerate(sensors):
+        start = i * 3
+        x, y, z = segment[:, start], segment[:, start+1], segment[:, start+2]
         
         # Correlações
         feature_vector.append(np.corrcoef(x, y)[0, 1] if np.std(x)>0 and np.std(y)>0 else 0)
@@ -182,23 +175,17 @@ def extract_manual_features_single(segment, fs=50):
         feature_vector.append(np.mean(np.abs(x) + np.abs(y) + np.abs(z)))
         
         # EVA
-        data_3d = np.vstack((x, y, z)).T
-        cov_matrix = np.cov(data_3d, rowvar=False)
-        eigenvalues = np.linalg.eigvalsh(cov_matrix)
-        eigenvalues.sort()
-        feature_vector.append(eigenvalues[-1])
-        feature_vector.append(eigenvalues[-2])
+        evals = np.linalg.eigvalsh(np.cov(np.vstack((x, y, z)).T, rowvar=False))
+        feature_vector.extend([evals[-1], evals[-2]])
         
-        e_x = np.sum(np.abs(fft(x))[:len(x)//2]**2)/len(x)
-        e_y = np.sum(np.abs(fft(y))[:len(y)//2]**2)/len(y)
-        e_z = np.sum(np.abs(fft(z))[:len(z)//2]**2)/len(z)
-        
-        if sensor == 'acc': energies_acc = [e_x, e_y, e_z]
-        if sensor == 'gyro': energies_gyro = [e_x, e_y, e_z]
+        # Guardar energia para passo 4 (Recalcular para garantir)
+        if sensor in energies:
+            energies[sensor] = [np.sum(np.abs(fft(axis))[:len(axis)//2]**2)/len(axis) for axis in [x,y,z]]
 
-    feature_vector.append(np.mean(energies_acc)) 
-    feature_vector.append(np.mean(energies_gyro)) 
-    
+    # --- PASSO 4: Agregadas (AAE, ARE) ---
+    feature_vector.append(np.mean(energies['acc']))
+    feature_vector.append(np.mean(energies['gyro']))
+
     return np.array(feature_vector).reshape(1, -1)
 
 #importar funções do embeddings_extractor.py
@@ -247,20 +234,20 @@ def get_embedding_single(segment, fs_in_hz=50.0):
         
     return embedding
 
-def predict_activity_from_segment(segment, pipeline_path='best_model_pipeline.pkl'):
+def predict_activity_from_segment(segment, pipeline_path='./src/best_model_pipeline.pkl'):
     if not os.path.exists(pipeline_path):
         raise FileNotFoundError(f"Ficheiro {pipeline_path} não encontrado.")
         
     with open(pipeline_path, 'rb') as f:
         model_pkg = pickle.load(f)
-        
-    # 2. USAR AS FUNÇÕES SINGLE (CORREÇÃO)
+    
+    # 2. USAR AS FUNÇÕES SINGLE
     if model_pkg['data_type'] == 'manual':
-        X = extract_manual_features_single(segment) # <-- USA A NOVA
+        X = extract_manual_features_single(segment) 
     else:
-        X = get_embedding_single(segment) # <-- USA A NOVA
+        X = get_embedding_single(segment)
         
-    # 3. Normalização e Redução (Igual)
+    # 3. Normalização e Redução
     X = model_pkg['scaler'].transform(X)
     
     if model_pkg['reducer'] is not None:
@@ -293,37 +280,28 @@ def main():
         print("Erro: Não há dados suficientes.")
         exit()
         
-    # 3. Selecionar um Segmento Aleatório
-    # Colunas 1 a 10 (exclusivo) = índices 1..9 (Acc, Gyro, Mag)
-    start = np.random.randint(0, len(data) - 256)
-    segment_raw = data[start : start + 256, 1:10] # Shape (256, 9)
-    true_label = int(data[start, 11])
+    # ... (depois de carregar dados) ...
+
+    print(f"\nA testar 1000 segmentos aleatórios...")
+    correct = 0
+    total = 1000
     
-    print(f"\nSegmento Selecionado: Linhas {start}-{start+256}")
-    
-    # 4. EXECUTAR O MODELO
-    try:
-        predicted_label, model_name = predict_activity_from_segment(segment_raw)
+    for i in range(total):
+        start = np.random.randint(0, len(data) - 256)
+        segment_raw = data[start : start + 256, 1:10]
+        true_label = int(data[start, 11])
         
-        # Mapa para display
-        acts = {
-            1: 'STAND', 2: 'SIT', 3: 'SIT AND TALK', 4: 'WALK', 5: 'WALK AND TALK',
-            6: 'CLIMB STAIR', 7: 'CLIMB STAIR AND TALK'
-        }
-        
-        print("\n" + "="*40)
-        print(f"MODELO USADO: {model_name}")
-        print("="*40)
-        print(f"PREVISÃO:   {predicted_label} -> {acts.get(predicted_label, 'Unknown')}")
-        print(f"VERDADEIRO: {true_label} -> {acts.get(true_label, 'Unknown')}")
-        
-        if predicted_label == true_label:
-            print("\nRESULTADO:  SUCESSO")
-        else:
-            print("\nRESULTADO:  ERRO")
+        try:
+            pred_label, _ = predict_activity_from_segment(segment_raw)
+            if pred_label == true_label:
+                correct += 1
+                print(f"Seg {i+1}: ✅ ({true_label})")
+            else:
+                print(f"Seg {i+1}: ❌ Real: {true_label} vs Pred: {pred_label}")
+        except:
+            pass
             
-    except Exception as e:
-        print(f"\n[ERRO] Falha no deployment: {e}")
+    print(f"\nAccuracy no Teste Rápido: {correct/total*100:.1f}%")
 
 
 if __name__ == "__main__":

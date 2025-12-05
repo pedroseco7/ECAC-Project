@@ -332,15 +332,64 @@ def perform_splits(dataset, method, current_seed):
     groups = dataset[:, -1]
 
     if method == 'random':
-        print("A aplicar Random Split (Stratified)...")
+        print("A aplicar Random Split (Within-Subject)...")
+        
+        # Listas para acumular os pedaços de cada participante
+        X_train_list, y_train_list = [], []
+        X_val_list, y_val_list = [], []
+        X_test_list, y_test_list = [], []
 
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=0.4, random_state=current_seed, stratify=y
-        )
-        X_val, X_test, y_val, y_test = train_test_split(
-            X_test, y_test, test_size=0.5, random_state=current_seed, stratify=y_test
-        )
-        return (X_train, y_train), (X_val, y_val), (X_test, y_test)
+        # Identificar todos os sujeitos únicos (ex: 1, 2, 3...)
+        unique_subjects = np.unique(groups)
+
+        for sub_id in unique_subjects:
+            # 1. Isolar os dados APENAS deste sujeito
+            mask = (groups == sub_id)
+            X_sub = X[mask]
+            y_sub = y[mask]
+
+            # 2. Fazer o split 60/20/20 para ESTE sujeito específico
+            try:
+                # Passo A: Tirar 60% para Treino (sobram 40% temporários)
+                # Usamos stratify=y_sub para manter a proporção de atividades DENTRO deste sujeito
+                X_tr, X_temp, y_tr, y_temp = train_test_split(
+                    X_sub, y_sub, 
+                    test_size=0.4, 
+                    random_state=current_seed, 
+                    stratify=y_sub
+                )
+
+                # Passo B: Dividir o temporário (40%) em Validação (20%) e Teste (20%)
+                X_val, X_te, y_val, y_te = train_test_split(
+                    X_temp, y_temp, 
+                    test_size=0.5, 
+                    random_state=current_seed, 
+                    stratify=y_temp
+                )
+
+                # 3. Guardar os pedaços nas listas
+                X_train_list.append(X_tr)
+                y_train_list.append(y_tr)
+                X_val_list.append(X_val)
+                y_val_list.append(y_val)
+                X_test_list.append(X_te)
+                y_test_list.append(y_te)
+
+            except ValueError:
+                # Fallback: Se o sujeito tiver tão poucas amostras de uma classe que o stratify falha
+                # fazemos split sem stratify para não crashar o código
+                # print(f"Aviso: Stratify falhou para Subject {sub_id}, a fazer aleatório simples.")
+                X_tr, X_temp, y_tr, y_temp = train_test_split(X_sub, y_sub, test_size=0.4, random_state=current_seed)
+                X_val, X_te, y_val, y_te = train_test_split(X_temp, y_temp, test_size=0.5, random_state=current_seed)
+                
+                X_train_list.append(X_tr); y_train_list.append(y_tr)
+                X_val_list.append(X_val); y_val_list.append(y_val)
+                X_test_list.append(X_te); y_test_list.append(y_te)
+
+        # 4. Consolidar todos os pedaços num único array gigante
+        return (np.vstack(X_train_list), np.concatenate(y_train_list)), \
+               (np.vstack(X_val_list), np.concatenate(y_val_list)), \
+               (np.vstack(X_test_list), np.concatenate(y_test_list))
     
     elif method == 'subject':
         print("A aplicar Subject Split...")
