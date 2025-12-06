@@ -279,30 +279,62 @@ def main():
     if len(data) < 256:
         print("Erro: Não há dados suficientes.")
         exit()
-        
-    # ... (depois de carregar dados) ...
+
+    # Mapa para display
+    activities_map = {
+        1: 'STAND', 2: 'SIT', 3: 'SIT AND TALK', 4: 'WALK', 5: 'WALK AND TALK',
+        6: 'CLIMB STAIR', 7: 'CLIMB STAIR AND TALK'
+    }
 
     print(f"\nA testar 1000 segmentos aleatórios...")
-    correct = 0
-    total = 1000
     
-    for i in range(total):
+    total_tests = 1000
+    correct_global = 0
+    
+    # Dicionário para guardar contagens por classe: {label: {'correct': 0, 'total': 0}}
+    class_stats = {label: {'correct': 0, 'total': 0} for label in activities_map.keys()}
+    
+    for i in range(total_tests):
         start = np.random.randint(0, len(data) - 256)
         segment_raw = data[start : start + 256, 1:10]
         true_label = int(data[start, 11])
         
         try:
+            # Incrementar total de aparições desta classe
+            if true_label in class_stats:
+                class_stats[true_label]['total'] += 1
+            
             pred_label, _ = predict_activity_from_segment(segment_raw)
+            
             if pred_label == true_label:
-                correct += 1
+                correct_global += 1
+                # Incrementar acertos desta classe
+                if true_label in class_stats:
+                    class_stats[true_label]['correct'] += 1
+                
                 print(f"Seg {i+1}: ✅ ({true_label})")
             else:
                 print(f"Seg {i+1}: ❌ Real: {true_label} vs Pred: {pred_label}")
-        except:
-            pass
+        except Exception as e:
+            print(f"Erro no segmento {i}: {e}")
             
-    print(f"\nAccuracy no Teste Rápido: {correct/total*100:.1f}%")
+    # --- RESULTADOS FINAIS ---
+    print("\n" + "="*60)
+    print(f"RESUMO DO TESTE DE DEPLOYMENT ({total_tests} Segmentos)")
+    print("="*60)
+    print(f"Accuracy Global: {(correct_global/total_tests)*100:.2f}%")
+    print("-" * 60)
+    print(f"{'ATIVIDADE':<35} | {'ACCURACY':<10} | {'CONTAGEM'}")
+    print("-" * 60)
 
+    for label, name in activities_map.items():
+        stats = class_stats[label]
+        if stats['total'] > 0:
+            acc = (stats['correct'] / stats['total']) * 100
+            print(f"{name:<35} | {acc:6.2f}%   | {stats['correct']}/{stats['total']}")
+        else:
+            print(f"{name:<35} |   N/A      | 0/0")
+    print("-" * 60)
 
 if __name__ == "__main__":
     main()
