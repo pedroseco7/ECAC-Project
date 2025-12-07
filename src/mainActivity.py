@@ -10,6 +10,8 @@ from sklearn.cluster import DBSCAN
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 from sklearn.feature_selection import SelectKBest, f_classif
+import pickle
+import re
 
 from ReliefF import ReliefF
 
@@ -994,8 +996,78 @@ def perform_Fisher_score(X, y, n_features_to_select=10):
 
 def main():
 
+    feature_file = "features.pkl"
+    
+    np_features = None
+    feature_names = None
+    
+    dataset = loadData(None)
+
+    print("\n--- A Iniciar Extração de Features")
+
+    all_features = []
+    all_feature_names = None
+
+    total_files = len(dataset)
+    processed_count = 0
+
+    for key, data in dataset.items():
+        processed_count += 1
+
+        match = re.search(r'part(\d+)', key)
+        if match:
+            subject_id = int(match.group(1))
+        else:
+            print("Não consegui extrair")
+            continue
+
+        print(f"[{processed_count}/{total_files}] Processando {key} com subject_id = {subject_id}...")
+
+        features_temp, names_temp = extract_features(data, WINDOW_SIZE, STEP_SIZE, SAMPLING_RATE)
+
+        if features_temp.size > 0:
+            
+            num_rows = features_temp.shape[0]
+
+            subject_col = np.full((num_rows, 1), subject_id, dtype=float)
+                
+            # --- PASSO 3: Juntar tudo ---
+            # Adiciona a coluna do ID à direita das features
+            # O resultado fica: [Feature1, ..., Label, SubjectID]
+            features_with_subject = np.hstack((features_temp, subject_col))
+            
+            all_features.append(features_with_subject)
+            
+            # Atualizar a lista de nomes apenas na primeira vez
+            if all_feature_names is None:
+                all_feature_names = names_temp + ['subject_id']
+
+    # 3. Consolidar e Guardar
+    if all_features:
+        np_features = np.vstack(all_features)
+        feature_names = all_feature_names
+        
+        print(f"\nTotal de segmentos: {np_features.shape[0]}")
+        print(f"Total de features (incluindo Label e ID): {np_features.shape[1]}")
+        
+        # Verificar se a última coluna é realmente o ID
+        print(f"Exemplo da última coluna (IDs): {np_features[:10, -1]}")
+        
+        print(f"\n[INFO] A guardar dados em '{feature_file}'...")
+        
+        # --- MUITO IMPORTANTE ---
+        # Guarda como um dicionário para manteres os nomes das colunas associados aos dados
+        with open(feature_file, 'wb') as f:
+            pickle.dump({'features': np_features, 'names': feature_names}, f)
+            
+        print("[INFO] Guardado com sucesso! Podes agora fazer o Split por Subject.")
+        
+    else:
+        print("\nNenhuma feature extraída!")
+
+
     #2.
-    #"""
+    """
     dataset = loadData(None)
     
     if not dataset:
@@ -1006,7 +1078,6 @@ def main():
             print(f"Key: {key}, Values: {values}")
             break
     
-    #"""
     
     #3.1
     print("\n=== Acelerómetro ===")
@@ -1029,7 +1100,6 @@ def main():
     #outlierDensity('magnetometer')
 
 
-    """
     K = (3, 3.5, 4)
     for i in K:
         print(f"\n=== Detecção de Outliers Acelerómetro Para K = {i}===")
@@ -1047,7 +1117,9 @@ def main():
     #statisticalSignificance(dataset)
 
     #4.2 - Extração de Features
-    #'''
+    '''
+    features_file = "features.pkl"
+    
     all_features = []
     all_feature_names = None
     
@@ -1077,6 +1149,11 @@ def main():
         print(f"\nTotal de segmentos: {np_features.shape[0]}")
         print(f"Total de features: {np_features.shape[1]}")
         
+        with open(features_file, 'wb') as f:
+            pickle.dump(np_features, f)
+        
+    '''
+    '''
         # Contagem por atividade
         label_col_index = feature_names.index('activity_label')
         activity_labels_vector = np_features[:, label_col_index]
@@ -1150,7 +1227,8 @@ def main():
     else:
         print("\nNenhuma feature extraída!")
 
-        #'''
+    '''
+
 
 if __name__ == "__main__":
     main()
