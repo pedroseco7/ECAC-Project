@@ -295,7 +295,25 @@ def main():
     class_stats = {label: {'correct': 0, 'total': 0} for label in activities_map.keys()}
     
     for i in range(total_tests):
-        start = np.random.randint(0, len(data) - 256)
+        # Tentar encontrar um segmento válido (sem transição)
+        max_retries = 100
+        valid_segment = False
+        
+        for _ in range(max_retries):
+            start = np.random.randint(0, len(data) - 256)
+            
+            # Extrair as labels de TODO o segmento
+            segment_labels = data[start : start + 256, 11]
+            
+            # Verificar se existe apenas 1 valor único (uma só atividade)
+            if len(np.unique(segment_labels)) == 1:
+                valid_segment = True
+                break
+        
+        if not valid_segment:
+            print(f"Seg {i+1}: Não foi possível encontrar segmento puro após várias tentativas.")
+            continue
+
         segment_raw = data[start : start + 256, 1:10]
         true_label = int(data[start, 11])
         
