@@ -75,7 +75,7 @@ def analyze_data(data):
     return activity_counts
     
 
-def smote_activity(dataset, activity_label, K):
+def smote_activity(dataset, activity_label, n_to_generate, k_neighbors = 5):
     """Aplicar o SMOTE a uma atividade específica do dataset"""
 
     activity_samples = []
@@ -93,7 +93,6 @@ def smote_activity(dataset, activity_label, K):
 
     # Separar características e labels
     X = activity_samples[:, :11] 
-
     N = X.shape[0]
 
     if N < 2:
@@ -103,21 +102,21 @@ def smote_activity(dataset, activity_label, K):
     # Vamos definir o número de vizinhos que devem ser considerados
     # É importante considerar que deve ser pelo menos 2
 
-    k_neighbors = min(K, N - 1)
+    K = min(k_neighbors, N - 1)
 
-    neighbors = NearestNeighbors(n_neighbors=k_neighbors + 1).fit(X)
+    neighbors = NearestNeighbors(n_neighbors=K + 1).fit(X)
 
     samples_sinteticas = []
 
-    for _ in range(K):
+    for _ in range(n_to_generate):
         
         # Vamos escolher uma amostra aleatória
         idx = random.randrange(N)
-        X_idx = X[idx].reshape(1, -1)
+        random_sample = X[idx].reshape(1, -1)
 
         # Encontrar os K vizinhos mais próximos
 
-        _, indices = neighbors.kneighbors(X_idx, n_neighbors=k_neighbors + 1)
+        _, indices = neighbors.kneighbors(random_sample)
 
         neighbors_indices = indices[0][1:]
 
